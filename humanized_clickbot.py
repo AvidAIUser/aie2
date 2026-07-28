@@ -52,10 +52,17 @@ PROCESS_VM_READ = 0x0010
 PROCESS_VM_WRITE = 0x0020
 
 # Game state detection addresses (update for your GD version)
+# These are example offsets - you'll need to find the actual ones for your GD version using Cheat Engine or similar
+GD_BASE_ADDRESS = None  # Will be scanned at runtime
 GD_PLAYER_X_OFFSET = 0x000
 GD_PLAYER_Y_OFFSET = 0x004
+GD_PLAYER_Y_VELOCITY_OFFSET = 0x008
+GD_PLAYER_ON_GROUND_OFFSET = 0x00C
 GD_PLAYER_DEAD_OFFSET = 0x018
 GD_GAME_STATE_OFFSET = 0x030
+GD_LEVEL_OBJECTS_OFFSET = 0x040  # Offset to level objects array
+GD_PLAYER_SIZE_OFFSET = 0x014
+GD_PLAYER_MODE_OFFSET = 0x010  # cube/ship/ball/ufo/etc
 
 
 class GameState(Enum):
@@ -384,6 +391,25 @@ class HumanizedClickbot:
         self.is_dead_addr = None
         self.progress_addr = None
         self.game_state = GameState.MENU
+        self.gd_base_address = None
+        
+        # Player state tracking
+        self.player_x = 0.0
+        self.player_y = 0.0
+        self.player_y_velocity = 0.0
+        self.player_on_ground = False
+        self.player_mode = 0  # 0=cube, 1=ship, 2=ball, 3=ufo, etc.
+        self.player_size = 0.0
+        
+        # Level objects (obstacles)
+        self.level_objects = []  # List of detected obstacles
+        self.last_obstacle_x = 0.0
+        self.distance_to_next_obstacle = float('inf')
+        
+        # Click timing for obstacles
+        self.should_click_now = False
+        self.click_buffer = []  # Buffered click commands
+        self.obstacle_reaction_delay = 45.0  # ms delay before clicking at obstacle
         
         # Analytics
         self.analytics = ClickAnalytics() if self.config.enable_analytics else None
@@ -513,10 +539,28 @@ class HumanizedClickbot:
                 print("Failed to open process!")
                 return False
             print("Process opened successfully")
+            
+            # Scan for base addresses and player object
+            self.scan_game_memory()
+            
             return True
         except Exception as e:
             print(f"Error opening process: {e}")
             return False
+    
+    def scan_game_memory(self):
+        """Scan game memory to find important addresses"""
+        print("Scanning game memory for player object and offsets...")
+        
+        # Try to find the player object by scanning for typical player X values
+        # In a real implementation, you'd use signature scanning or known patterns
+        # This is a simplified example
+        
+        # For now, we'll just note that memory reading requires actual GD offsets
+        # Users should use Cheat Engine to find their specific version's offsets
+        print("Note: Memory scanning requires GD-specific offsets.")
+        print("Use Cheat Engine to find your GD version's player object address.")
+        print("Then set GD_BASE_ADDRESS in the code accordingly.")
     
     def read_memory(self, address: int, size: int = 4) -> Optional[int]:
         """Read memory from the game process"""
@@ -1071,6 +1115,183 @@ class HumanizedClickbot:
         if self.analytics:
             self.analytics.fatigue_history.append(self.fatigue_level)
     
+    def read_player_state(self):
+        """Read player position and state from game memory"""
+        if not self.gd_base_address or not self.player_object_addr:
+            return False
+        
+        try:
+            # Read player X position
+            x_addr = self.player_object_addr + GD_PLAYER_X_OFFSET
+            x_bytes = self.read_memory(x_addr, 4)
+            if x_bytes is not None:
+                self.player_x = ctypes.c_float(x_bytes).value
+            
+            # Read player Y position
+            y_addr = self.player_object_addr + GD_PLAYER_Y_OFFSET
+            y_bytes = self.read_memory(y_addr, 4)
+            if y_bytes is not None:
+                self.player_y = ctypes.c_float(y_bytes).value
+            
+            # Read player Y velocity (for jump detection)
+            vy_addr = self.player_object_addr + GD_PLAYER_Y_VELOCITY_OFFSET
+            vy_bytes = self.read_memory(vy_addr, 4)
+            if vy_bytes is not None:
+                self.player_y_velocity = ctypes.c_float(vy_bytes).value
+            
+            # Read on-ground status
+            on_ground_addr = self.player_object_addr + GD_PLAYER_ON_GROUND_OFFSET
+            on_ground_bytes = self.read_memory(on_ground_addr, 1)
+            if on_ground_bytes is not None:
+                self.player_on_ground = bool(on_ground_bytes)
+            
+            # Read player mode (cube, ship, ball, ufo, etc.)
+            mode_addr = self.player_object_addr + GD_PLAYER_MODE_OFFSET
+            mode_bytes = self.read_memory(mode_addr, 4)
+            if mode_bytes is not None:
+                self.player_mode = mode_bytes
+            
+            # Read player size
+            size_addr = self.player_object_addr + GD_PLAYER_SIZE_OFFSET
+            size_bytes = self.read_memory(size_addr, 4)
+            if size_bytes is not None:
+                self.player_size = ctypes.c_float(size_bytes).value
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error reading player state: {e}")
+            return False
+    
+    def detect_obstacles_ahead(self, look_ahead_distance: float = 500.0) -> List[Dict]:
+        """
+        Detect obstacles ahead of the player by reading level data from memory.
+        Returns list of obstacles with their positions and types.
+        
+        In a full implementation, this would read the level object array from memory.
+        For now, this is a placeholder that demonstrates the structure.
+        """
+        if not self.player_object_addr:
+            return []
+        
+        obstacles = []
+        
+        # This is where you'd read the level objects array from memory
+        # Each object would have: type (spike, block, orb, etc.), x, y, width, height
+        
+        # Example obstacle structure (would come from memory in real implementation):
+        # obstacles = [
+        #     {'type': 'spike', 'x': player_x + 150, 'y': 0, 'width': 40, 'height': 40},
+        #     {'type': 'block', 'x': player_x + 300, 'y': 100, 'width': 40, 'height': 40},
+        # ]
+        
+        # For demonstration, we'll calculate distance to next "virtual" obstacle
+        # based on time since last click (simulating a continuous stream)
+        if len(self.click_buffer) > 0:
+            self.last_obstacle_x = self.player_x - 100  # Behind us now
+        
+        return obstacles
+    
+    def should_click_for_obstacle(self, obstacle: Dict) -> bool:
+        """
+        Determine if we should click for a given obstacle based on player state.
+        Takes into account game mode, player position, and obstacle properties.
+        """
+        if not obstacle:
+            return False
+        
+        distance = obstacle['x'] - self.player_x
+        
+        # Different logic for different game modes
+        if self.player_mode == 0:  # Cube mode
+            # Click when obstacle is at optimal jump distance
+            # Typical jump distance for cube is ~120-180 pixels depending on speed
+            optimal_jump_distance = 150.0 + (self.player_size * 20)
+            
+            # Add human-like variation to trigger point
+            variation = random.gauss(0, 15.0)
+            trigger_distance = optimal_jump_distance + variation
+            
+            if distance <= trigger_distance and distance > 0:
+                # Only click if we're on the ground (can actually jump)
+                if self.player_on_ground:
+                    return True
+                    
+        elif self.player_mode == 1:  # Ship mode
+            # Hold click to go up, release to go down
+            # Click when we need to gain height to avoid obstacle
+            if obstacle['type'] in ['spike', 'saw']:
+                # Need to be above obstacle
+                required_height = obstacle.get('height', 40) + 20
+                if self.player_y < required_height and distance < 200:
+                    return True
+                    
+        elif self.player_mode == 2:  # Ball mode
+            # Click to flip gravity
+            # Similar timing to cube but inverted
+            optimal_flip_distance = 140.0
+            variation = random.gauss(0, 12.0)
+            
+            if distance <= optimal_flip_distance + variation and distance > 0:
+                return True
+                
+        elif self.player_mode == 3:  # UFO mode
+            # Click for small jumps in mid-air
+            # Timing is more lenient than cube
+            if self.player_y < obstacle.get('height', 40):
+                optimal_ufo_distance = 100.0
+                variation = random.gauss(0, 20.0)
+                
+                if distance <= optimal_ufo_distance + variation and distance > 0:
+                    return True
+        
+        # Add other modes as needed (wave, robot, spider)
+        
+        return False
+    
+    def calculate_click_timing(self, obstacle: Dict) -> float:
+        """
+        Calculate the optimal time to click for an obstacle.
+        Returns delay in milliseconds before clicking.
+        """
+        distance = obstacle['x'] - self.player_x
+        
+        # Base reaction time with humanization
+        base_delay = self.calculate_humanized_delay(self.obstacle_reaction_delay)
+        
+        # Adjust based on distance (closer = less delay)
+        distance_factor = distance / 200.0  # Normalize to typical reaction distance
+        adjusted_delay = base_delay * distance_factor
+        
+        # Add mode-specific adjustments
+        if self.player_mode == 0:  # Cube
+            # Precise timing needed
+            adjusted_delay *= 0.9
+        elif self.player_mode == 1:  # Ship
+            # More forgiving timing
+            adjusted_delay *= 1.2
+        
+        return max(adjusted_delay, 10.0)  # Minimum 10ms
+    
+    def update_game_state(self):
+        """Update all game state information from memory"""
+        # Update basic game state (menu/playing/paused/etc.)
+        self.game_state = self.detect_game_state()
+        
+        # If playing, read detailed player state
+        if self.game_state == GameState.PLAYING:
+            self.read_player_state()
+            
+            # Detect upcoming obstacles
+            self.level_objects = self.detect_obstacles_ahead()
+            
+            # Find nearest obstacle and calculate distance
+            if self.level_objects:
+                nearest = min(self.level_objects, key=lambda o: o['x'] - self.player_x)
+                self.distance_to_next_obstacle = nearest['x'] - self.player_x
+            else:
+                self.distance_to_next_obstacle = float('inf')
+    
     def detect_game_state(self) -> GameState:
         """Detect current game state from memory or window analysis"""
         if not self.game_window:
@@ -1219,9 +1440,16 @@ class HumanizedClickbot:
                 pass
             time.sleep(0.01)
     
-    def auto_click(self, click_interval: float = 0.017):
-        """Main auto-click loop with humanization"""
-        print(f"Starting humanized auto-click (interval: {click_interval}s)")
+    def auto_click(self, click_interval: float = 0.017, mode: str = 'obstacle'):
+        """
+        Main auto-click loop with humanization.
+        
+        Args:
+            click_interval: Base interval between clicks in seconds (default ~60 FPS)
+            mode: Click mode - 'obstacle' for smart obstacle-based clicking,
+                  'spam' for constant clicking (old behavior)
+        """
+        print(f"Starting humanized auto-click (mode: {mode}, interval: {click_interval}s)")
         self.is_running = True
         
         # Get screen dimensions for bounds checking
@@ -1230,35 +1458,96 @@ class HumanizedClickbot:
         screen_width, screen_height = pyautogui.size()
         margin = 50
         
+        # Track click state for hold-based modes (ship, ufo)
+        is_holding = False
+        hold_start_time = 0
+        
         try:
             while self.is_running:
-                # Calculate humanized delay
-                delay = self.calculate_humanized_delay(click_interval * 1000)
+                # Update game state from memory
+                self.update_game_state()
                 
-                # Wait with variation
-                time.sleep(delay / 1000.0)
+                # Determine if we should click based on mode
+                should_click = False
                 
-                # Get game window position
-                if self.game_window:
-                    try:
-                        rect = win32gui.GetWindowRect(self.game_window)
-                        center_x = (rect[0] + rect[2]) // 2
-                        center_y = (rect[1] + rect[3]) // 2
-                        
-                        # Ensure coordinates are within safe bounds
-                        center_x = max(margin, min(screen_width - margin, center_x))
-                        center_y = max(margin, min(screen_height - margin, center_y))
-                        
-                        # Perform humanized click
-                        self.simulate_mouse_click(center_x, center_y, delay)
-                    except Exception as e:
-                        # Window may have closed or become invalid
-                        print(f"Warning: Could not get window position: {e}")
-                        self.game_window = None
-                        continue
+                if mode == 'obstacle' and self.game_state == GameState.PLAYING:
+                    # Smart obstacle-based clicking
+                    if self.level_objects:
+                        # Find nearest obstacle we need to react to
+                        for obstacle in sorted(self.level_objects, key=lambda o: o['x'] - self.player_x):
+                            distance = obstacle['x'] - self.player_x
+                            
+                            # Only consider obstacles ahead and within reaction range
+                            if distance > 0 and distance < 400:
+                                if self.should_click_for_obstacle(obstacle):
+                                    should_click = True
+                                    break
+                    else:
+                        # No obstacles detected - fall back to basic rhythm clicking
+                        # This handles cases where memory reading isn't working
+                        elapsed_since_last = time.time() - self.last_click_time
+                        if elapsed_since_last >= click_interval:
+                            should_click = True
+                
+                elif mode == 'spam':
+                    # Old behavior: constant clicking at interval
+                    elapsed_since_last = time.time() - self.last_click_time
+                    if elapsed_since_last >= click_interval:
+                        should_click = True
+                
+                # Handle ship/ufo hold mechanics
+                if self.player_mode in [1, 3]:  # Ship or UFO
+                    if should_click and not is_holding:
+                        # Start holding
+                        is_holding = True
+                        hold_start_time = time.time()
+                        # Mouse down will happen below
+                    elif not should_click and is_holding:
+                        # Release hold
+                        is_holding = False
+                        try:
+                            pyautogui.mouseUp(button='left')
+                        except Exception:
+                            pass
+                
+                # Execute click if needed
+                if should_click:
+                    # Get game window position
+                    if self.game_window:
+                        try:
+                            rect = win32gui.GetWindowRect(self.game_window)
+                            center_x = (rect[0] + rect[2]) // 2
+                            center_y = (rect[1] + rect[3]) // 2
+                            
+                            # Ensure coordinates are within safe bounds
+                            center_x = max(margin, min(screen_width - margin, center_x))
+                            center_y = max(margin, min(screen_height - margin, center_y))
+                            
+                            # For ship/ufo, just do mouseDown without full click simulation
+                            if self.player_mode in [1, 3] and is_holding:
+                                try:
+                                    pyautogui.mouseDown(button='left')
+                                except Exception:
+                                    pass
+                            else:
+                                # Calculate humanized delay for timing
+                                delay = self.calculate_humanized_delay(click_interval * 1000)
+                                # Perform humanized click
+                                self.simulate_mouse_click(center_x, center_y, delay)
+                            
+                            self.last_click_time = time.time()
+                            
+                        except Exception as e:
+                            # Window may have closed or become invalid
+                            print(f"Warning: Could not get window position: {e}")
+                            self.game_window = None
+                            continue
+                    else:
+                        # Try to re-find the window
+                        self.find_geometry_dash()
                 else:
-                    # Try to re-find the window
-                    self.find_geometry_dash()
+                    # Small sleep to prevent CPU spinning when not clicking
+                    time.sleep(0.001)
                 
                 # Update state
                 self.update_fatigue()
@@ -1270,6 +1559,12 @@ class HumanizedClickbot:
             print(f"\nError in auto_click loop: {e}")
         finally:
             self.is_running = False
+            # Release mouse button if still holding
+            if is_holding:
+                try:
+                    pyautogui.mouseUp(button='left')
+                except Exception:
+                    pass
     
     def start(self):
         """Start the clickbot"""
