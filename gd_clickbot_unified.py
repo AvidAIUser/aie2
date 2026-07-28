@@ -9,6 +9,7 @@ import os
 import random
 import cv2
 from datetime import datetime
+from pynput import mouse as pynput_mouse
 
 # Ensure directory exists for saving data
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".gd_clickbot")
@@ -40,6 +41,8 @@ class ClickBotEngine:
         self.ground_color = None
         self.scan_region = None
         self.lock = threading.Lock()
+        self.last_click_time = 0
+        self.min_click_gap = 0.05  # Minimum 50ms between clicks to prevent spam
 
     def load_learned_clicks(self):
         if os.path.exists(DATA_FILE):
@@ -96,13 +99,20 @@ class ClickBotEngine:
             pyautogui.moveTo(current_x + dx, current_y + dy, duration=0.01)
 
     def perform_click(self, duration=0.1):
+        # Prevent clicking too fast
+        now = time.time()
+        if now - self.last_click_time < self.min_click_gap:
+            return
+            
         if random.random() < self.config.misclick_chance:
+            self.last_click_time = now
             return # Simulate missed click
         
         self.apply_jitter()
         pyautogui.mouseDown()
         time.sleep(duration)
         pyautogui.mouseUp()
+        self.last_click_time = now
         
         # Increase fatigue slightly
         self.fatigue_level += 1
@@ -145,6 +155,7 @@ class ClickBotEngine:
         self.current_attempt_start = time.time()
         self.last_progress = 0
         self.session_clicks = []
+        self.last_click_time = 0
         
         # Load learned clicks at start of run
         if self.mode == 'playback':
