@@ -13,6 +13,7 @@ Features:
 - Session persistence & learning
 - Real-time game state analysis
 - Performance analytics dashboard
+- GUI interface for easy control
 """
 
 import ctypes
@@ -37,6 +38,8 @@ import win32gui
 import win32process
 import win32con
 import psutil
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 try:
     import torch
@@ -1707,37 +1710,209 @@ class HumanizedClickbot:
         print("Clickbot stopped")
 
 
+class ClickbotGUI:
+    """GUI interface for the Humanized Clickbot"""
+    
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Humanized GD Clickbot")
+        self.root.resizable(False, False)
+        
+        # Clickbot instance
+        self.bot = None
+        self.clicking_thread = None
+        self.is_active = False
+        
+        # Configuration variables
+        self.click_interval_var = tk.DoubleVar(value=0.017)
+        self.base_reaction_var = tk.DoubleVar(value=45.0)
+        self.reaction_variance_var = tk.DoubleVar(value=25.0)
+        self.misclick_prob_var = tk.DoubleVar(value=0.015)
+        self.jitter_amp_var = tk.DoubleVar(value=1.5)
+        self.fatigue_rate_var = tk.DoubleVar(value=0.0008)
+        
+        self.click_mode_var = tk.StringVar(value='rhythm')
+        self.status_var = tk.StringVar(value="Not started")
+        
+        self.setup_ui()
+    
+    def setup_ui(self):
+        """Setup the user interface"""
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Humanized GD Clickbot", 
+                                font=('Helvetica', 16, 'bold'))
+        title_label.grid(row=0, column=0, columnspan=2, pady=(0, 15))
+        
+        # Status section
+        status_frame = ttk.LabelFrame(main_frame, text="Status", padding="5")
+        status_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        self.status_label = ttk.Label(status_frame, textvariable=self.status_var,
+                                      font=('Helvetica', 11))
+        self.status_label.grid(row=0, column=0, sticky=tk.W)
+        
+        # Control section
+        control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="5")
+        control_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        # Start/Stop buttons
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.grid(row=0, column=0, columnspan=2, pady=5)
+        
+        self.start_btn = ttk.Button(btn_frame, text="Start Clickbot", 
+                                    command=self.start_clickbot)
+        self.start_btn.grid(row=0, column=0, padx=5)
+        
+        self.stop_btn = ttk.Button(btn_frame, text="Stop", 
+                                   command=self.stop_clickbot, state=tk.DISABLED)
+        self.stop_btn.grid(row=0, column=1, padx=5)
+        
+        # Click mode selection
+        mode_frame = ttk.Frame(control_frame)
+        mode_frame.grid(row=1, column=0, columnspan=2, pady=5)
+        
+        ttk.Label(mode_frame, text="Click Mode:").grid(row=0, column=0, padx=5)
+        
+        mode_combo = ttk.Combobox(mode_frame, textvariable=self.click_mode_var,
+                                  values=['rhythm', 'obstacle', 'spam'],
+                                  width=15, state='readonly')
+        mode_combo.grid(row=0, column=1, padx=5)
+        
+        ttk.Label(mode_frame, text="(rhythm=recommended)", 
+                  font=('Helvetica', 8)).grid(row=0, column=2, padx=5)
+        
+        # Click interval
+        interval_frame = ttk.Frame(control_frame)
+        interval_frame.grid(row=2, column=0, columnspan=2, pady=5, sticky=tk.W)
+        
+        ttk.Label(interval_frame, text="Click Interval (s):").grid(row=0, column=0, padx=5)
+        interval_spin = ttk.Spinbox(interval_frame, from_=0.001, to=1.0, 
+                                    increment=0.001, textvariable=self.click_interval_var,
+                                    width=10)
+        interval_spin.grid(row=0, column=1, padx=5)
+        
+        # Humanization settings
+        human_frame = ttk.LabelFrame(main_frame, text="Humanization Settings", padding="5")
+        human_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        # Base reaction time
+        row = 0
+        ttk.Label(human_frame, text="Base Reaction (ms):").grid(row=row, column=0, padx=5, pady=2, sticky=tk.E)
+        ttk.Spinbox(human_frame, from_=10, to=200, increment=1, 
+                    textvariable=self.base_reaction_var, width=10).grid(row=row, column=1, padx=5, pady=2)
+        
+        # Reaction variance
+        row += 1
+        ttk.Label(human_frame, text="Reaction Variance (ms):").grid(row=row, column=0, padx=5, pady=2, sticky=tk.E)
+        ttk.Spinbox(human_frame, from_=0, to=100, increment=1, 
+                    textvariable=self.reaction_variance_var, width=10).grid(row=row, column=1, padx=5, pady=2)
+        
+        # Misclick probability
+        row += 1
+        self.misclick_display_var = tk.DoubleVar(value=self.misclick_prob_var.get()*100)
+        ttk.Label(human_frame, text="Misclick Chance (%):").grid(row=row, column=0, padx=5, pady=2, sticky=tk.E)
+        ttk.Spinbox(human_frame, from_=0, to=10, increment=0.1, 
+                    textvariable=self.misclick_display_var, width=10).grid(row=row, column=1, padx=5, pady=2)
+        
+        # Jitter amplitude
+        row += 1
+        ttk.Label(human_frame, text="Jitter Amplitude (px):").grid(row=row, column=0, padx=5, pady=2, sticky=tk.E)
+        ttk.Spinbox(human_frame, from_=0, to=10, increment=0.1, 
+                    textvariable=self.jitter_amp_var, width=10).grid(row=row, column=1, padx=5, pady=2)
+        
+        # Fatigue rate
+        row += 1
+        ttk.Label(human_frame, text="Fatigue Rate:").grid(row=row, column=0, padx=5, pady=2, sticky=tk.E)
+        ttk.Spinbox(human_frame, from_=0, to=0.01, increment=0.0001, 
+                    textvariable=self.fatigue_rate_var, width=10).grid(row=row, column=1, padx=5, pady=2)
+        
+        # Info section
+        info_frame = ttk.LabelFrame(main_frame, text="Information", padding="5")
+        info_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        info_text = """Mode Guide:
+• rhythm: Predicts obstacle timing (works without memory offsets) - RECOMMENDED
+• obstacle: Uses memory reading for precise obstacle detection (requires Cheat Engine setup)
+• spam: Constant clicking at set interval (legacy mode)
+
+Tips:
+1. Start Geometry Dash before clicking 'Start Clickbot'
+2. Use 'rhythm' mode for immediate results
+3. Adjust click interval based on your needs (0.017s ≈ 60 FPS)
+4. Lower humanization values = more robotic, higher = more human-like"""
+        
+        info_label = ttk.Label(info_frame, text=info_text, justify=tk.LEFT, 
+                               font=('Helvetica', 9))
+        info_label.grid(row=0, column=0, sticky=tk.W)
+    
+    def start_clickbot(self):
+        """Start the clickbot"""
+        try:
+            # Create configuration
+            config = HumanizationConfig(
+                base_reaction_time=self.base_reaction_var.get(),
+                reaction_time_variance=self.reaction_variance_var.get(),
+                misclick_probability=self.misclick_display_var.get() / 100.0,
+                jitter_amplitude=self.jitter_amp_var.get(),
+                fatigue_rate=self.fatigue_rate_var.get(),
+            )
+            
+            # Initialize clickbot
+            self.bot = HumanizedClickbot(config)
+            
+            if not self.bot.start():
+                messagebox.showerror("Error", "Failed to initialize clickbot.\nMake sure Geometry Dash is running!")
+                return
+            
+            self.is_active = True
+            self.status_var.set("Running - Clicking...")
+            self.start_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.NORMAL)
+            
+            # Start clicking in a separate thread
+            self.clicking_thread = threading.Thread(
+                target=self._run_clickbot,
+                daemon=True
+            )
+            self.clicking_thread.start()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start clickbot:\n{str(e)}")
+            self.is_active = False
+    
+    def _run_clickbot(self):
+        """Run the clickbot loop in a thread"""
+        try:
+            mode = self.click_mode_var.get()
+            interval = self.click_interval_var.get()
+            self.bot.auto_click(click_interval=interval, mode=mode)
+        except Exception as e:
+            self.root.after(0, lambda: self.status_var.set(f"Error: {str(e)}"))
+        finally:
+            self.is_active = False
+            self.root.after(0, self._on_clickbot_stop)
+    
+    def _on_clickbot_stop(self):
+        """Called when clickbot stops"""
+        self.status_var.set("Stopped")
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+    
+    def stop_clickbot(self):
+        """Stop the clickbot"""
+        if self.bot:
+            self.bot.stop()
+        self.is_active = False
+
+
 def main():
-    """Main entry point"""
-    print("=" * 60)
-    print("AI-Assisted Humanized Clickbot for Geometry Dash")
-    print("=" * 60)
-    print()
-    
-    # Create custom configuration
-    config = HumanizationConfig(
-        base_reaction_time=45.0,
-        reaction_time_variance=25.0,
-        misclick_probability=0.015,
-        jitter_amplitude=1.5,
-        fatigue_rate=0.0008,
-    )
-    
-    # Initialize clickbot
-    bot = HumanizedClickbot(config)
-    
-    if not bot.start():
-        print("Failed to initialize clickbot")
-        return
-    
-    # Start auto-clicking
-    # Adjust interval as needed (0.017 ≈ 60 FPS)
-    try:
-        bot.auto_click(click_interval=0.017)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        bot.stop()
+    """Main entry point with GUI"""
+    root = tk.Tk()
+    app = ClickbotGUI(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":
