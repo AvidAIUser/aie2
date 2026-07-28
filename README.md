@@ -1,5 +1,7 @@
 # AI-Assisted Humanized Clickbot for Geometry Dash v2.0
 
+![Version](https://img.shields.io/badge/version-2.0-blue)
+
 Advanced clickbot that injects sophisticated human imperfections using AI-driven pattern prediction, multi-layer jitter synthesis, and behavioral biometrics.
 
 ## 🚀 New Features in v2.0
