@@ -56,7 +56,18 @@ pip install torch>=2.0.0
 
 ## Usage
 
-### Basic Usage
+### GUI Mode (Recommended)
+```bash
+python humanized_clickbot.py
+```
+A graphical interface will open where you can:
+- Start/Stop the clickbot with button clicks
+- Select click mode (rhythm/obstacle/spam)
+- Adjust click interval
+- Configure humanization settings
+- View status and helpful tips
+
+### Basic Command Line Usage
 ```bash
 python humanized_clickbot.py
 ```
