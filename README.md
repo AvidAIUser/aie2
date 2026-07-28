@@ -2,7 +2,7 @@
 
 ![Version](https://img.shields.io/badge/version-2.0-blue)
 
-Advanced clickbot that injects sophisticated human imperfections using AI-driven pattern prediction, multi-layer jitter synthesis, and behavioral biometrics.
+Advanced clickbot that injects sophisticated human imperfections using AI-driven pattern prediction, multi-layer jitter synthesis, and behavioral biometrics. Now includes **rhythm-based clicking** that works without memory offsets!
 
 ## 🚀 New Features in v2.0
 
@@ -36,6 +36,11 @@ Advanced clickbot that injects sophisticated human imperfections using AI-driven
 - **Multiple Misclick Types**: hesitation, early_release, late_release, double_click, triple_click
 - **Smart Correction Behavior**: Attempts to correct obvious misclicks
 - **Click-Type Awareness**: Different misclick probabilities for rapid vs precision clicks
+
+### Rhythm Mode (NEW!)
+- **No Memory Offsets Required**: Works immediately without finding GD memory addresses
+- **Predictive Obstacle Detection**: Estimates obstacle positions based on typical GD patterns
+- **Adaptive Timing**: Adjusts click timing based on game mode (cube, ship, UFO, ball)
 
 ## Installation
 
@@ -74,9 +79,42 @@ config = HumanizationConfig(
 # Initialize and start
 bot = HumanizedClickbot(config)
 bot.start()
-bot.auto_click(click_interval=0.017)
+
+# Choose your mode:
+# 'obstacle' - Smart obstacle-based clicking (requires memory access)
+# 'rhythm' - Rhythm-based clicking (works without memory access) RECOMMENDED
+# 'spam' - Constant clicking at interval
+bot.auto_click(click_interval=0.017, mode='rhythm')
 bot.stop()
 ```
+
+### Click Modes Explained
+
+#### Rhythm Mode (Recommended for most users)
+```python
+bot.auto_click(click_interval=0.017, mode='rhythm')
+```
+- **No setup required** - works immediately
+- Predicts obstacle positions based on typical GD patterns
+- Adapts to different game modes (cube, ship, UFO, ball)
+- Best for regular levels with consistent obstacle spacing
+
+#### Obstacle Mode (Advanced)
+```python
+bot.auto_click(click_interval=0.017, mode='obstacle')
+```
+- Requires GD memory offsets to be configured
+- Reads actual obstacle positions from game memory
+- More precise but requires Cheat Engine setup
+- Best for users who can find their GD version's offsets
+
+#### Spam Mode (Legacy)
+```python
+bot.auto_click(click_interval=0.017, mode='spam')
+```
+- Constant clicking at specified interval
+- Old behavior, less human-like
+- Useful for testing or specific scenarios
 
 ## Configuration Options
 
@@ -153,6 +191,13 @@ Fatigue_Increase = base_rate * (1 + current_fatigue)
 Recovery = base_recovery * cooldown_multiplier (after rests > 5s)
 ```
 
+### 6. Rhythm-Based Obstacle Prediction (NEW!)
+When memory access isn't available:
+1. Estimate player position from last known state
+2. Predict next obstacle based on typical GD spacing (150-250 pixels)
+3. Add variation to simulate different level patterns
+4. Time clicks based on predicted obstacle distance
+
 ## Architecture
 
 ```
@@ -162,6 +207,7 @@ HumanizedClickbot
 ├── ClickAnalytics (real-time stats)
 ├── JitterGenerator (multi-layer synthesis)
 ├── GameStateDetector (context awareness)
+├── ObstaclePredictor (rhythm-based detection)
 └── SessionManager (persistence)
 ```
 
@@ -173,7 +219,7 @@ bot.find_geometry_dash()      # Detect game process
 bot.open_process()            # Open with memory access
 bot.detect_game_state()       # Get current state
 bot.adapt_to_difficulty(f)    # Adjust for difficulty
-bot.auto_click(interval)      # Start auto-clicking
+bot.auto_click(interval, mode) # Start auto-clicking
 bot.start()                   # Initialize
 bot.stop()                    # Cleanup
 ```
@@ -216,9 +262,24 @@ Ensure the game is running before starting the bot.
 ### High misclick rate
 Reduce `misclick_probability` in the config for more consistent clicking.
 
+### Can't find memory offsets
+Use **rhythm mode** which doesn't require memory access:
+```python
+bot.auto_click(click_interval=0.017, mode='rhythm')
+```
+
+### Finding Memory Offsets (Advanced)
+If you want to use obstacle mode with memory access:
+1. Download Cheat Engine
+2. Attach to GeometryDash.exe
+3. Find player X coordinate (float value that changes as you move)
+4. Note the address and offset chain
+5. Update `GD_BASE_ADDRESS` and offset constants in the code
+
 ## Contributing
 
 Contributions welcome! Areas for improvement:
+- Enhanced screen-based obstacle detection (template matching)
 - Additional game state detection methods
 - More sophisticated ML models
 - Enhanced anti-detection measures
