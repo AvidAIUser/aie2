@@ -177,6 +177,8 @@ class GDClickbotUnified:
         self.is_visible = not self.is_visible
         if self.is_visible:
             self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
             self.set_click_through(False) # Become interactive when opened
             self.find_gd_window() # Re-scan for GD
         else:
@@ -210,8 +212,13 @@ class GDClickbotUnified:
         self.root.overrideredirect(True) # Borderless
         self.root.attributes('-topmost', True)
         
+        # Force window to be visible and on top
+        self.root.lift()
+        self.root.focus_force()
+        self.root.update_idletasks()
+        
         # Initial size
-        self.root.geometry("360x580")
+        self.root.geometry("360x580+100+100")  # Start at a visible position
         
         # Colors
         self.bg_color = "#1a1a1d"
@@ -281,8 +288,8 @@ class GDClickbotUnified:
         # Make controls interactive (remove click-through when hovering them)
         self.setup_control_bindings()
         
-        # Initial state
-        self.set_click_through(True)
+        # Initial state - start visible and interactive so user can see it
+        self.set_click_through(False)
         
         # Start monitor loop
         self.root.after(100, self.update_monitor)
