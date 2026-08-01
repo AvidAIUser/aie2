@@ -338,8 +338,10 @@ class GDClickbotUnified:
         # Drag Logic (Only on Title Bar)
         self.title_bar.bind("<ButtonPress-1>", self.start_drag)
         self.title_bar.bind("<B1-Motion>", self.do_drag)
+        self.title_bar.bind("<ButtonRelease-1>", self.stop_drag)
         lbl_title.bind("<ButtonPress-1>", self.start_drag)
         lbl_title.bind("<B1-Motion>", self.do_drag)
+        lbl_title.bind("<ButtonRelease-1>", self.stop_drag)
 
         # --- Tabs ---
         tab_control = ttk.Notebook(self.main_frame)
@@ -622,6 +624,9 @@ class GDClickbotUnified:
             x = self.root.winfo_x() + (event.x - self.drag_offset_x)
             y = self.root.winfo_y() + (event.y - self.drag_offset_y)
             self.root.geometry(f"+{x}+{y}")
+
+    def stop_drag(self, event):
+        self.drag_active = False
 
     def pick_region(self):
         self.root.withdraw()
