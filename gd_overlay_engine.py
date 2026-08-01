@@ -54,26 +54,41 @@ class OverlayEngine:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def set_click_through(self, enable: bool):
+        # Only update if state actually changes
+        if self.is_click_through == enable:
+            return
+        
+        # Prevent rapid state changes that cause blinking (minimum 150ms between changes)
+        import time
+        if not hasattr(self, 'last_state_change'):
+            self.last_state_change = 0
+        current_time = time.time()
+        if current_time - self.last_state_change < 0.15:
+            return
+        
+        self.last_state_change = current_time
         self.is_click_through = enable
-        if enable:
-            # WS_EX_TRANSPARENT | WS_EX_LAYERED
-            try:
-                hwnd = self.root.winfo_id()
-                import ctypes
-                user32 = ctypes.windll.user32
-                ex_style = user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
-                user32.SetWindowLongW(hwnd, -20, ex_style | 0x20 | 0x80)
-            except Exception:
-                pass # Fallback if ctypes fails
-        else:
-            try:
-                hwnd = self.root.winfo_id()
-                import ctypes
-                user32 = ctypes.windll.user32
-                ex_style = user32.GetWindowLongW(hwnd, -20)
-                user32.SetWindowLongW(hwnd, -20, ex_style & ~0x20) # Remove TRANSPARENT
-            except Exception:
-                pass
+        
+        try:
+            hwnd = self.root.winfo_id()
+            import ctypes
+            user32 = ctypes.windll.user32
+            ex_style = user32.GetWindowLongW(hwnd, -20) # GWL_EXSTYLE
+            
+            if enable:
+                # Add WS_EX_TRANSPARENT (0x20) while keeping WS_EX_LAYERED (0x80)
+                new_style = ex_style | 0x20 | 0x80
+            else:
+                # Remove WS_EX_TRANSPARENT but keep WS_EX_LAYERED
+                new_style = ex_style & ~0x20 | 0x80
+            
+            # Only call SetWindowLongW if style actually changed
+            if new_style != ex_style:
+                user32.SetWindowLongW(hwnd, -20, new_style)
+                # Force a single redraw after style change
+                user32.RedrawWindow(hwnd, None, None, 0x0411) # RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN
+        except Exception:
+            pass
 
     def poll_queue(self):
         """Non-blocking check for messages from main process"""
@@ -84,10 +99,12 @@ class OverlayEngine:
         except Exception:
             pass
         
-        self.render()
+        # Only render if overlay is enabled to reduce CPU usage
+        if self.overlay_data.get('enabled', False):
+            self.render()
         
-        # Schedule next poll (50ms = 20 FPS for overlay updates)
-        self.root.after(50, self.poll_queue)
+        # Schedule next poll (100ms = 10 FPS for overlay updates - reduces flicker)
+        self.root.after(100, self.poll_queue)
 
     def handle_message(self, msg):
         cmd = msg.get('cmd')
