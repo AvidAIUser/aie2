@@ -1,64 +1,164 @@
+#!/usr/bin/env python3
+"""
+GD Clickbot Overlay v4.0 - Professional In-Game Automation
+Features:
+- Seamless in-game overlay (click-through, always-on-top)
+- Real-time CPS/FPS monitoring with visual indicators
+- Auto-save/load configurations per level
+- Smart window detection & auto-positioning
+- Cyberpunk aesthetic with animated elements
+- Safety features (Panic stop, soft-start, anti-ban)
+- Advanced humanization (reaction variance, jitter, fatigue)
+- Playback mode for learned patterns
+"""
+
 import tkinter as tk
 from tkinter import ttk, messagebox
-import pyautogui
-import numpy as np
-import time
 import threading
+import time
 import json
 import os
+import sys
 import random
-import cv2
-from datetime import datetime
-from pynput import mouse as pynput_mouse
 import ctypes
-from ctypes import wintypes
+import numpy as np
+import cv2
+from PIL import Image, ImageGrab
+from pynput.mouse import Button, Controller as MouseController
+from pynput.keyboard import Listener, KeyCode
+import win32gui
+import win32con
+import win32process
+import psutil
+from datetime import datetime
 
-# Windows API constants for making window click-through and transparent
-LWA_COLORKEY = 0x00000001
-LWA_ALPHA = 0x00000002
-WS_EX_LAYERED = 0x00080000
-WS_EX_TRANSPARENT = 0x00000020
-WS_EX_TOPMOST = 0x00000008
-GWL_EXSTYLE = -20
-GWL_STYLE = -16
+# --- Configuration & Constants ---
+CONFIG_FILE = "gd_clickbot_config.json"
+VERSION = "4.0.0"
 
+class Config:
+    """Persistent configuration management"""
+    def __init__(self):
+        self.click_delay = 0.017  # Default ~60 FPS
+        self.target_color = [255, 255, 255]
+        self.color_tolerance = 30
+        self.region = None
+        self.fps_limit = 60
+        self.humanization = {
+            'reaction_time': 50.0,
+            'variance': 20.0,
+            'misclick_chance': 0.02,
+            'jitter': 2.0,
+            'fatigue_rate': 0.0001
+        }
+        self.learned_clicks = []
+        self.load()
+
+    def load(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.click_delay = data.get('click_delay', 0.017)
+                    self.target_color = data.get('target_color', [255, 255, 255])
+                    self.color_tolerance = data.get('color_tolerance', 30)
+                    self.region = data.get('region')
+                    self.fps_limit = data.get('fps_limit', 60)
+                    self.humanization = data.get('humanization', self.humanization)
+                    self.learned_clicks = data.get('learned_clicks', [])
+            except Exception as e:
+                print(f"Config load error: {e}")
+
+    def save(self):
+        data = {
+            'click_delay': self.click_delay,
+            'target_color': self.target_color,
+            'color_tolerance': self.color_tolerance,
+            'region': self.region,
+            'fps_limit': self.fps_limit,
+            'humanization': self.humanization,
+            'learned_clicks': self.learned_clicks
+        }
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+
+# --- Windows API Helpers ---
 class WindowsOverlayHelper:
-    """Helper class to make Tkinter window behave as an in-game overlay"""
-    
     @staticmethod
     def make_click_through(hwnd):
-        """Make window click-through (mouse passes through to game)"""
-        ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        ex_style |= WS_EX_LAYERED | WS_EX_TRANSPARENT
-        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style)
-    
-    @staticmethod
-    def make_topmost(hwnd):
-        """Make window always on top"""
-        hwnd_int = int(hwnd)
-        ctypes.windll.user32.SetWindowPos(hwnd_int, -1, 0, 0, 0, 0, 0x0002 | 0x0001)
-    
-    @staticmethod
-    def set_transparent(hwnd, alpha=200):
-        """Set window transparency (0-255)"""
-        try:
-            hwnd_int = int(hwnd)
-            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd_int, 0, alpha, LWA_ALPHA)
-        except Exception as e:
-            print(f"Transparency error: {e}")
-    
-    @staticmethod
-    def remove_border(hwnd):
-        """Remove window borders and title bar"""
-        hwnd_int = int(hwnd)
-        style = ctypes.windll.user32.GetWindowLongW(hwnd_int, GWL_STYLE)
-        style &= ~(0xC00000 | 0x40000)  # Remove caption and border
-        ctypes.windll.user32.SetWindowLongW(hwnd_int, GWL_STYLE, style)
+        """Make window click-through while keeping it visible"""
+        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        ex_style |= win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
+        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex_style)
 
-# Ensure directory exists for saving data
-DATA_DIR = os.path.join(os.path.expanduser("~"), ".gd_clickbot")
-os.makedirs(DATA_DIR, exist_ok=True)
-DATA_FILE = os.path.join(DATA_DIR, "learned_clicks.json")
+    @staticmethod
+    def make_interactive(hwnd):
+        """Restore normal interaction"""
+        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        ex_style &= ~win32con.WS_EX_TRANSPARENT
+        ex_style |= win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
+        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex_style)
+
+    @staticmethod
+    def find_geometry_dash_window():
+        """Robust GD window detection with multiple fallbacks"""
+        targets = [
+            ("Geometry Dash", None),
+            ("Steam", None),
+            (None, "UnityWndClass"),
+            ("OpenGL", None)
+        ]
+        
+        for title_part, class_name in targets:
+            def callback(hwnd, results):
+                if win32gui.IsWindowVisible(hwnd):
+                    try:
+                        title = win32gui.GetWindowText(hwnd)
+                        cls = win32gui.GetClassName(hwnd)
+                        
+                        match = False
+                        if title_part and title_part.lower() in title.lower():
+                            match = True
+                        if class_name and cls == class_name:
+                            match = True
+                            
+                        if match:
+                            rect = win32gui.GetWindowRect(hwnd)
+                            if rect[2] - rect[0] > 100 and rect[3] - rect[1] > 100:
+                                results.append(hwnd)
+                    except:
+                        pass
+                return True
+            
+            results = []
+            win32gui.EnumWindows(callback, results)
+            if results:
+                return results[0]
+        return None
+
+    @staticmethod
+    def position_over_target(hwnd_target, hwnd_overlay, width, height):
+        """Position overlay at top-right of target window"""
+        if not hwnd_target:
+            return False
+        
+        try:
+            rect = win32gui.GetWindowRect(hwnd_target)
+            x = rect[2] - width - 15
+            y = rect[1] + 15
+            
+            screen_width = ctypes.windll.user32.GetSystemMetrics(0)
+            screen_height = ctypes.windll.user32.GetSystemMetrics(1)
+            
+            x = max(10, min(x, screen_width - width - 10))
+            y = max(10, min(y, screen_height - height - 10))
+            
+            win32gui.SetWindowPos(hwnd_overlay, win32con.HWND_TOPMOST, x, y, width, height, 
+                                win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+            return True
+        except Exception as e:
+            print(f"Positioning error: {e}")
+            return False
 
 class HumanizationConfig:
     def __init__(self, reaction_time=50.0, variance=20.0, misclick_chance=0.02, 
