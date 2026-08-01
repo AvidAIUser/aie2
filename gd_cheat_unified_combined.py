@@ -69,16 +69,26 @@ class GDClickbotUnified:
         self.running = False
         self.gd_hwnd = None
         
-        # Threads
+        # Threading control
         self.click_thread = None
         self.monitor_thread = None
         self.stop_event = threading.Event()
+        self.snap_thread = None
+        self.stop_snap_loop = False
 
+        # Setup hotkeys FIRST before GUI
         self.setup_hotkey()
+        
+        # Create GUI
         self.create_gui()
         
-        # Try to find GD immediately
-        self.find_gd_window()
+        # Start background monitoring AFTER GUI exists
+        self.stop_monitoring = False
+        self.monitor_thread = threading.Thread(target=self.monitor_gd_window, daemon=True)
+        self.monitor_thread.start()
+        
+        # Try to find GD immediately (non-blocking)
+        self.root.after(100, self.find_gd_window)
 
     def setup_hotkey(self):
         def on_press(key):
@@ -106,7 +116,10 @@ class GDClickbotUnified:
             self.log("EMERGENCY STOP TRIGGERED")
 
     def find_gd_window(self):
-        """Finds Geometry Dash window and stores handle"""
+        """Finds Geometry Dash window and stores handle - SAFE non-blocking version"""
+        if not hasattr(self, 'root') or self.root is None:
+            return
+            
         def callback(hwnd, extra):
             if win32gui.IsWindowVisible(hwnd):
                 title = win32gui.GetWindowText(hwnd)
@@ -119,15 +132,68 @@ class GDClickbotUnified:
             win32gui.EnumWindows(callback, None)
             if self.gd_hwnd:
                 self.log(f"Attached to Geometry Dash (HWND: {self.gd_hwnd})")
-                self.snap_to_gd()
+                # Use after() to schedule snap on main thread safely
+                self.root.after(0, self.snap_to_gd)
             else:
-                self.log("GD not found. Launch the game to attach.")
+                if self.debug_logging_var.get() if hasattr(self, 'debug_logging_var') else False:
+                    self.log("GD not found. Launch the game to attach.")
         except Exception as e:
-            self.log(f"Error finding GD: {e}")
+            if self.debug_logging_var.get() if hasattr(self, 'debug_logging_var') else False:
+                self.log(f"Error finding GD: {e}")
+
+    def monitor_gd_window(self):
+        """Background thread to detect GD window changes without freezing"""
+        last_hwnd = None
+        while not getattr(self, 'stop_monitoring', False):
+            try:
+                windows = gw.getWindowsWithTitle("Geometry Dash")
+                if windows:
+                    win = windows[0]
+                    current_hwnd = win._hWnd
+                    
+                    # Only act if window state changed
+                    if current_hwnd != last_hwnd:
+                        last_hwnd = current_hwnd
+                        self.gd_hwnd = current_hwnd
+                        
+                        # Schedule UI updates on main thread
+                        if hasattr(self, 'root') and self.root:
+                            self.root.after(0, lambda h=current_hwnd: self.on_gd_found(h))
+                    elif not win.isActive:
+                        # Window exists but not active
+                        pass
+                else:
+                    if last_hwnd is not None:
+                        last_hwnd = None
+                        self.gd_hwnd = None
+                        if hasattr(self, 'root') and self.root:
+                            self.root.after(0, lambda: self.log("GD window lost."))
+                
+                time.sleep(1.5)  # Check every 1.5 seconds
+            except Exception as e:
+                if getattr(self, 'debug_logging_var', None) and self.debug_logging_var.get():
+                    if hasattr(self, 'root') and self.root:
+                        self.root.after(0, lambda err=e: self.log(f"Monitor error: {err}"))
+                time.sleep(2.0)
+
+    def on_gd_found(self, hwnd):
+        """Called when GD is found - runs on main thread"""
+        self.gd_hwnd = hwnd
+        self.log(f"Attached to Geometry Dash (HWND: {hwnd})")
+        
+        # Only auto-snap if enabled
+        if hasattr(self, 'auto_snap_var') and self.auto_snap_var.get():
+            self.snap_to_gd()
 
     def snap_to_gd(self):
-        """Moves the cheat menu to the top-right of the GD window using pygetwindow for better compatibility"""
-        if not self.root:
+        """Moves the cheat menu to the top-right of the GD window - SAFE version"""
+        if not hasattr(self, 'root') or self.root is None:
+            return
+        
+        # Safety: don't snap if root is being destroyed
+        try:
+            self.root.update_idletasks()
+        except:
             return
         
         # Try pygetwindow first (more reliable for modern Windows)
@@ -142,18 +208,26 @@ class GDClickbotUnified:
                 x = gd.left + gd.width - menu_w - 10
                 y = gd.top + 10
                 
+                # Bounds check
+                screen_w = self.root.winfo_screenwidth()
+                screen_h = self.root.winfo_screenheight()
+                x = max(0, min(x, screen_w - menu_w))
+                y = max(0, min(y, screen_h - menu_h))
+                
                 self.root.geometry(f"{menu_w}x{menu_h}+{int(x)}+{int(y)}")
                 self.log("Menu snapped to GD window (pygetwindow).")
                 self.gd_hwnd = None  # Clear old handle
                 return
         except Exception as e:
-            self.log(f"pygetwindow snap failed: {e}")
+            if hasattr(self, 'debug_logging_var') and self.debug_logging_var.get():
+                self.log(f"pygetwindow snap failed: {e}")
         
         # Fallback to win32gui method
         if not self.gd_hwnd:
-            self.find_gd_window()
+            # Don't recursively call find_gd_window, just return
+            return
         
-        if not self.gd_hwnd or not self.root:
+        if not self.root:
             return
 
         try:
@@ -168,10 +242,17 @@ class GDClickbotUnified:
             x = left + width - menu_w - 10
             y = top + 10
             
+            # Bounds check
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
+            x = max(0, min(x, screen_w - menu_w))
+            y = max(0, min(y, screen_h - menu_h))
+            
             self.root.geometry(f"{menu_w}x{menu_h}+{int(x)}+{int(y)}")
             self.log("Menu snapped to GD window (win32gui).")
         except Exception as e:
-            self.log(f"Snap failed: {e}")
+            if hasattr(self, 'debug_logging_var') and self.debug_logging_var.get():
+                self.log(f"Snap failed: {e}")
 
     def toggle_menu(self):
         self.is_visible = not self.is_visible
