@@ -1,332 +1,429 @@
-#!/usr/bin/env python3
-"""
-GD Clickbot Overlay v5.0 - Ultimate In-Game Automation
-Features:
-- Seamless in-game overlay (click-through, always-on-top)
-- Real-time CPS monitoring & latency display
-- Live mini-preview of monitored region
-- Smart auto-positioning over Geometry Dash
-- Modern cyberpunk UI with neon accents
-- Profile system for quick configuration switching
-- Intelligent hover-to-interact system
-"""
-
 import tkinter as tk
-from tkinter import ttk, font, messagebox, simpledialog
+from tkinter import ttk, colorchooser, messagebox
 import threading
 import time
-import sys
-import os
-import json
-import mss
-import numpy as np
 import cv2
-from PIL import Image, ImageTk
-from pynput.mouse import Controller, Button
+import numpy as np
+import pyautogui
+import pygetwindow as gw
 import win32gui
 import win32con
+import win32api
+from PIL import Image, ImageTk
+import json
+import os
 
-CONFIG_FILE = "gd_clickbot_config.json"
+# Configuration Constants
+CONFIG_FILE = "gd_cheat_config.json"
 DEFAULT_CONFIG = {
     "click_delay": 15,
-    "color_tolerance": 30,
-    "target_color": [255, 255, 255],
+    "tolerance": 30,
+    "target_color": [0, 255, 0],
     "region": None,
-    "opacity": 240,
-    "theme_color": "#00ffff"
+    "enabled": False,
+    "click_through": True
 }
 
-class Config:
+class GDClickbotEngine:
+    """Background logic for color detection and clicking"""
+    def __init__(self, overlay):
+        self.overlay = overlay
+        self.running = False
+        self.thread = None
+        self.cps = 0
+        self.last_click_time = 0
+        self.lock = threading.Lock()
+
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self.loop, daemon=True)
+            self.thread.start()
+            self.overlay.log("Bot Started", "green")
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+        self.overlay.log("Bot Stopped", "red")
+        self.cps = 0
+        self.overlay.update_stats(0)
+
+    def loop(self):
+        while self.running:
+            try:
+                if self.overlay.config["region"] and self.overlay.config["target_color"]:
+                    region = self.overlay.config["region"]
+                    target = tuple(self.overlay.config["target_color"])
+                    tolerance = self.overlay.config["tolerance"]
+                    delay = self.overlay.config["click_delay"] / 1000.0
+
+                    # Capture region
+                    screenshot = pyautogui.screenshot(region=region)
+                    frame = np.array(screenshot)
+                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    
+                    # Update preview (throttled slightly to avoid lag)
+                    if hasattr(self.overlay, 'update_preview'):
+                        self.overlay.update_preview(frame)
+
+                    # Color Detection
+                    lower = np.array([max(c - tolerance, 0) for c in target])
+                    upper = np.array([min(c + tolerance, 255) for c in target])
+                    mask = cv2.inRange(frame, lower, upper)
+                    
+                    if cv2.countNonZero(mask) > 0:
+                        current_time = time.time()
+                        if current_time - self.last_click_time >= delay:
+                            pyautogui.click()
+                            self.last_click_time = current_time
+                            
+                            # Simple CPS calculation
+                            with self.lock:
+                                self.cps = int(1 / (current_time - self.last_click_time)) if (current_time - self.last_click_time) > 0 else 0
+                                self.overlay.update_stats(self.cps)
+                    else:
+                        self.cps = 0
+                        self.overlay.update_stats(0)
+                        
+                time.sleep(0.001) # Prevent CPU spike
+            except Exception as e:
+                # Silently fail or log minor errors to avoid crashing
+                pass
+
+class GDOverlay:
     def __init__(self):
-        self.data = DEFAULT_CONFIG.copy()
-        self.load()
-    def load(self):
+        self.root = tk.Tk()
+        self.root.title("GD Cheat Menu")
+        self.root.geometry("360x580")
+        
+        # Load Config
+        self.config = self.load_config()
+        
+        # Engine
+        self.engine = GDClickbotEngine(self)
+        
+        # State
+        self.is_locked = True # True = Click-through mode (Playing), False = Interactive
+        self.drag_start_pos = None
+        self.window_offset = None
+        
+        self.setup_window()
+        self.setup_ui()
+        self.setup_hotkeys()
+        
+        # Start auto-snap timer
+        self.root.after(1000, self.auto_snap_to_gd)
+        self.root.after(100, self.update_loop)
+
+    def setup_window(self):
+        # Make transparent and layered
+        self.root.attributes('-alpha', 0.95)
+        self.root.attributes('-topmost', True)
+        self.root.overrideredirect(True)
+        
+        # Windows API for Click-Through
+        hwnd = win32gui.GetHwnd(self.root.winfo_id())
+        styles = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        # WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
+        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, styles | win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOOLWINDOW)
+        
+        # Bindings for dragging
+        self.root.bind("<Button-1>", self.on_press)
+        self.root.bind("<B1-Motion>", self.on_drag)
+        self.root.bind("<ButtonRelease-1>", self.on_release)
+
+    def setup_ui(self):
+        # Main Container (Needs to be interactive when unlocked)
+        self.main_frame = tk.Frame(self.root, bg="#1e1e1e", highlightthickness=2, highlightbackground="#00ff00")
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # --- Title Bar ---
+        title_bar = tk.Frame(self.main_frame, bg="#2d2d2d", height=30)
+        title_bar.pack(fill=tk.X)
+        title_bar.pack_propagate(False)
+        
+        lbl_title = tk.Label(title_bar, text="☠️ GD CHEAT MENU", bg="#2d2d2d", fg="#00ff00", font=("Segoe UI", 10, "bold"))
+        lbl_title.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        self.status_lbl = tk.Label(title_bar, text="[UNLOCKED]", bg="#2d2d2d", fg="#ffaa00", font=("Segoe UI", 8))
+        self.status_lbl.pack(side=tk.RIGHT, padx=10, pady=8)
+        
+        # --- Tabs ---
+        tab_control = ttk.Notebook(self.main_frame)
+        tab_control.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TNotebook.Tab', background='#333333', foreground='white', padding=[10, 5])
+        style.configure('TNotebook.Tab', font=('Segoe UI', 9))
+        style.map('TNotebook.Tab', background=[('selected', '#1e1e1e')])
+        
+        # Tab 1: Aimbot (Clickbot)
+        self.tab_aimbot = tk.Frame(tab_control, bg="#1e1e1e")
+        tab_control.add(self.tab_aimbot, text="  Aimbot  ")
+        self.build_aimbot_tab()
+        
+        # Tab 2: Visuals
+        self.tab_visuals = tk.Frame(tab_control, bg="#1e1e1e")
+        tab_control.add(self.tab_visuals, text="  Visuals  ")
+        self.build_visuals_tab()
+        
+        # Tab 3: Config
+        self.tab_config = tk.Frame(tab_control, bg="#1e1e1e")
+        tab_control.add(self.tab_config, text="  Config  ")
+        self.build_config_tab()
+        
+        # --- Footer / Log ---
+        log_frame = tk.Frame(self.main_frame, bg="#111111", height=80)
+        log_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        log_frame.pack_propagate(False)
+        
+        self.log_text = tk.Text(log_frame, bg="#111111", fg="#aaaaaa", font=("Consolas", 8), height=4, bd=0, highlightthickness=0)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log("System initialized. Press INSERT to toggle lock.")
+
+    def build_aimbot_tab(self):
+        # Status Panel
+        status_frame = tk.Frame(self.tab_aimbot, bg="#252525", pady=10)
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.led_lbl = tk.Label(status_frame, text="●", fg="#555555", bg="#252525", font=("Arial", 16))
+        self.led_lbl.pack(side=tk.LEFT, padx=5)
+        
+        self.cps_lbl = tk.Label(status_frame, text="0 CPS", fg="#ffffff", bg="#252525", font=("Segoe UI", 12, "bold"))
+        self.cps_lbl.pack(side=tk.LEFT)
+        
+        btn_start = tk.Button(status_frame, text="START", bg="#006400", fg="white", activebackground="#008000", 
+                              command=self.toggle_bot, font=("Segoe UI", 9, "bold"), relief=tk.FLAT)
+        btn_start.pack(side=tk.RIGHT, padx=5)
+        
+        # Live Preview
+        prev_frame = tk.LabelFrame(self.tab_aimbot, text="Live Feed", bg="#252525", fg="#888888", font=("Segoe UI", 8))
+        prev_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.preview_lbl = tk.Label(prev_frame, bg="black", text="No Region Selected", fg="#555555")
+        self.preview_lbl.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Controls
+        ctrl_frame = tk.Frame(self.tab_aimbot, bg="#1e1e1e")
+        ctrl_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Label(ctrl_frame, text="Click Delay (ms):", bg="#1e1e1e", fg="#ccc", font=("Segoe UI", 9)).pack(anchor=tk.W)
+        self.delay_slider = tk.Scale(ctrl_frame, from_=1, to=100, orient=tk.HORIZONTAL, bg="#333333", fg="white", 
+                                     troughcolor="#444444", highlightthickness=0, command=lambda v: self.save_setting("click_delay", int(v)))
+        self.delay_slider.set(self.config.get("click_delay", 15))
+        self.delay_slider.pack(fill=tk.X)
+        
+        tk.Label(ctrl_frame, text="Color Tolerance:", bg="#1e1e1e", fg="#ccc", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=(10,0))
+        self.tol_slider = tk.Scale(ctrl_frame, from_=0, to=100, orient=tk.HORIZONTAL, bg="#333333", fg="white", 
+                                   troughcolor="#444444", highlightthickness=0, command=lambda v: self.save_setting("tolerance", int(v)))
+        self.tol_slider.set(self.config.get("tolerance", 30))
+        self.tol_slider.pack(fill=tk.X)
+        
+        # Buttons
+        btn_row = tk.Frame(self.tab_aimbot, bg="#1e1e1e")
+        btn_row.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Button(btn_row, text="📍 Select Region", command=self.pick_region, bg="#444444", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(btn_row, text="🎨 Pick Color", command=self.pick_color, bg="#444444", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+
+    def build_visuals_tab(self):
+        tk.Label(self.tab_visuals, text="Visual Options", bg="#1e1e1e", fg="#888888", font=("Segoe UI", 10, "bold")).pack(pady=10)
+        tk.Label(self.tab_visuals, text="(Placeholder for future ESP/Wallhack)", bg="#1e1e1e", fg="#555555", font=("Segoe UI", 8)).pack()
+        
+        # Example toggle
+        var = tk.BooleanVar(value=True)
+        chk = tk.Checkbutton(self.tab_visuals, text="Show FPS Counter", variable=var, bg="#1e1e1e", fg="#ccc", selectcolor="#333333", activebackground="#1e1e1e", activeforeground="#ccc")
+        chk.pack(pady=20)
+
+    def build_config_tab(self):
+        tk.Label(self.tab_config, text="Profiles", bg="#1e1e1e", fg="#888888", font=("Segoe UI", 10, "bold")).pack(pady=10)
+        
+        btn_frame = tk.Frame(self.tab_config, bg="#1e1e1e")
+        btn_frame.pack(pady=10)
+        
+        tk.Button(btn_frame, text="Save Current", command=self.save_config, bg="#444444", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Reset Defaults", command=self.reset_config, bg="#552222", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(self.tab_config, text="Hotkeys:", bg="#1e1e1e", fg="#888888", font=("Segoe UI", 10, "bold")).pack(pady=(20, 5))
+        tk.Label(self.tab_config, text="INSERT : Toggle Menu Lock", bg="#1e1e1e", fg="#aaa", font=("Consolas", 9)).pack(anchor=tk.W, padx=20)
+        tk.Label(self.tab_config, text="F12    : Emergency Stop", bg="#1e1e1e", fg="#ff5555", font=("Consolas", 9)).pack(anchor=tk.W, padx=20)
+
+    def setup_hotkeys(self):
+        # Global hotkey listener in a separate thread
+        def listen():
+            import pynput.keyboard
+            def on_press(key):
+                try:
+                    if key == pynput.keyboard.Key.insert:
+                        self.toggle_lock()
+                    elif key == pynput.keyboard.Key.f12:
+                        self.emergency_stop()
+                except Exception:
+                    pass
+            with pynput.keyboard.Listener(on_press=on_press) as listener:
+                listener.join()
+        
+        t = threading.Thread(target=listen, daemon=True)
+        t.start()
+
+    # --- Logic Methods ---
+
+    def toggle_lock(self):
+        self.is_locked = not self.is_locked
+        hwnd = win32gui.GetHwnd(self.root.winfo_id())
+        styles = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        
+        if self.is_locked:
+            # Enable Click-Through
+            styles |= win32con.WS_EX_TRANSPARENT
+            self.status_lbl.config(text="[LOCKED]", fg="#00ff00")
+            self.main_frame.config(highlightbackground="#00ff00")
+            self.log("Menu Locked (Click-Through ON)")
+        else:
+            # Disable Click-Through (Interactive)
+            styles &= ~win32con.WS_EX_TRANSPARENT
+            self.status_lbl.config(text="[UNLOCKED]", fg="#ffaa00")
+            self.main_frame.config(highlightbackground="#ffaa00")
+            self.log("Menu Unlocked (Interactive)")
+            
+        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, styles)
+        # Force redraw
+        win32gui.SetWindowPos(hwnd, 0, 0, 0, 0, win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOZORDER | win32con.SWP_FRAMECHANGED)
+
+    def toggle_bot(self):
+        if self.engine.running:
+            self.engine.stop()
+            self.led_lbl.config(fg="#555555")
+        else:
+            if not self.config.get("region"):
+                messagebox.showwarning("Warning", "Please select a region first!")
+                return
+            self.engine.start()
+            self.led_lbl.config(fg="#00ff00")
+
+    def emergency_stop(self):
+        self.engine.stop()
+        self.led_lbl.config(fg="#555555")
+        self.log("EMERGENCY STOP TRIGGERED", "red")
+
+    def pick_region(self):
+        self.log("Minimize menu to select region...")
+        self.root.iconify()
+        time.sleep(0.5)
+        
+        # Simple crosshair selection logic could go here, using pyautogui for now
+        # For a better UX, we'd draw an overlay, but keeping it simple:
+        messagebox.showinfo("Region Select", "Click and drag to select the region on your screen.\n(This is a placeholder for full region drawing)")
+        # In a full implementation, we'd use a transparent overlay to draw the rect
+        # Simulating a region for demo:
+        self.config["region"] = (100, 100, 200, 200) 
+        self.log("Region set (Demo coords)", "green")
+        self.save_config()
+
+    def pick_color(self):
+        if not self.config.get("region"):
+            messagebox.showwarning("Error", "Select a region first!")
+            return
+        
+        # Grab center pixel of region
+        r = self.config["region"]
+        center_x = r[0] + r[2]//2
+        center_y = r[1] + r[3]//2
+        color = pyautogui.pixel(center_x, center_y)
+        
+        self.config["target_color"] = list(color)
+        self.log(f"Color picked: {color}", "cyan")
+        self.save_config()
+
+    def update_preview(self, frame):
+        # Resize frame to fit label
+        h, w, _ = frame.shape
+        aspect = w / h
+        new_w = 160
+        new_h = int(new_w / aspect)
+        
+        resized = cv2.resize(frame, (new_w, new_h))
+        resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(resized)
+        imgtk = ImageTk.PhotoImage(image=img)
+        
+        self.preview_lbl.imgtk = imgtk
+        self.preview_lbl.config(image=imgtk, text="")
+
+    def update_stats(self, cps):
+        self.cps_lbl.config(text=f"{cps} CPS")
+
+    def log(self, msg, color="white"):
+        self.log_text.insert(tk.END, f"> {msg}\n", color)
+        self.log_text.see(tk.END)
+        # Note: Tkinter text tags for color need configuration, simplified here
+
+    def auto_snap_to_gd(self):
+        try:
+            gd_windows = [w for w in gw.getAllWindows() if 'geometry dash' in w.title.lower()]
+            if gd_windows:
+                gd = gd_windows[0]
+                # Snap to top-right of GD
+                x = gd.left + gd.width - 370 # 360 width + padding
+                y = gd.top + 10
+                
+                # Only snap if we haven't moved manually far away (simple logic)
+                self.root.geometry(f"+{int(x)}+{int(y)}")
+                self.log("Snapped to Geometry Dash", "green")
+        except Exception:
+            pass
+        self.root.after(5000, self.auto_snap_to_gd) # Check every 5s
+
+    def update_loop(self):
+        # Periodic updates if needed
+        self.root.after(100, self.update_loop)
+
+    # --- Dragging Logic ---
+    def on_press(self, event):
+        if not self.is_locked:
+            # Only allow drag if clicked on title bar area (approx)
+            if event.y < 30:
+                self.drag_start_pos = (event.x, event.y)
+                self.window_offset = (self.root.winfo_x(), self.root.winfo_y())
+
+    def on_drag(self, event):
+        if self.drag_start_pos and not self.is_locked:
+            x = self.window_offset[0] + event.x - self.drag_start_pos[0]
+            y = self.window_offset[1] + event.y - self.drag_start_pos[1]
+            self.root.geometry(f"+{x}+{y}")
+
+    def on_release(self, event):
+        self.drag_start_pos = None
+
+    # --- Config Handling ---
+    def save_setting(self, key, value):
+        self.config[key] = value
+        # Debounce save could go here
+
+    def save_config(self):
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.config, f)
+        self.log("Config Saved", "green")
+
+    def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as f:
-                    self.data.update(json.load(f))
-            except: pass
-    def save(self):
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(self.data, f, indent=4)
-    def __getitem__(self, key): return self.data[key]
-    def __setitem__(self, key, value):
-        self.data[key] = value
-        self.save()
+                    return json.load(f)
+            except:
+                return DEFAULT_CONFIG.copy()
+        return DEFAULT_CONFIG.copy()
 
-class GhostOverlay(tk.Tk):
-    def __init__(self, controller):
-        super().__init__()
-        self.controller = controller
-        self.is_hovered = False
-        self.is_click_through = True
-        self.drag_start = None
-        self.title("GD Clickbot v5.0")
-        self.geometry("420x640")
-        self.resizable(False, False)
-        self.overrideredirect(True)
-        self.wm_attributes("-topmost", 1)
-        self.hwnd = None
-        self.update_idletasks()
-        if self.winfo_exists():
-            self.hwnd = win32gui.GetParent(self.winfo_id())
-            self.apply_ghost_mode()
-        self.bg_color = "#0f0f15"
-        self.accent = controller.config["theme_color"]
-        self.configure(bg=self.bg_color)
-        self.build_interface()
-        self.bind("<Enter>", self.on_enter)
-        self.bind("<Leave>", self.on_leave)
-        self.bind("<ButtonPress-1>", self.start_drag)
-        self.bind("<B1-Motion>", self.do_drag)
-        self.after(50, self.refresh_preview)
-
-    def apply_ghost_mode(self):
-        if not self.hwnd: return
-        if self.is_click_through and not self.is_hovered:
-            style = win32con.WS_EX_TRANSPARENT | win32con.WS_EX_LAYERED | win32con.WS_EX_TOOLWINDOW
-            win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, style)
-            win32gui.SetLayeredWindowAttributes(self.hwnd, 0, 235, win32con.LWA_ALPHA)
-        else:
-            style = win32con.WS_EX_LAYERED | win32con.WS_EX_TOOLWINDOW
-            win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, style)
-            win32gui.SetLayeredWindowAttributes(self.hwnd, 0, 255, win32con.LWA_ALPHA)
-
-    def on_enter(self, e):
-        self.is_hovered = True
-        self.is_click_through = False
-        self.apply_ghost_mode()
-        self.config(cursor="arrow")
-        self.header.config(bg="#1a1a2e")
-
-    def on_leave(self, e):
-        self.is_hovered = False
-        self.is_click_through = True
-        self.apply_ghost_mode()
-        self.config(cursor="none")
-        self.header.config(bg=self.bg_color)
-
-    def build_interface(self):
-        main = tk.Frame(self, bg=self.bg_color, highlightthickness=2, highlightbackground=self.accent)
-        main.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.header = tk.Frame(main, bg=self.bg_color, height=45)
-        self.header.pack(fill=tk.X, pady=(8, 5))
-        tk.Label(self.header, text="GD CLICKBOT v5", bg=self.bg_color, fg=self.accent, font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT, padx=12)
-        self.led = tk.Canvas(self.header, width=22, height=22, bg=self.bg_color, highlightthickness=0)
-        self.led.pack(side=tk.RIGHT, padx=12)
-        self.update_led(False)
-        prev_box = tk.Frame(main, bg="#000", bd=2, relief=tk.FLAT)
-        prev_box.pack(padx=12, pady=4)
-        self.preview_lbl = tk.Label(prev_box, bg="#000")
-        self.preview_lbl.pack()
-        tk.Label(prev_box, text="Live Monitor Feed", bg="#000", fg="#444", font=("Arial", 7)).pack()
-        stats = tk.Frame(main, bg=self.bg_color)
-        stats.pack(fill=tk.X, padx=12, pady=8)
-        self.cps_txt = tk.StringVar(value="CPS: 0.0")
-        tk.Label(stats, textvariable=self.cps_txt, bg=self.bg_color, fg="#fff", font=("Consolas", 13, "bold")).pack(side=tk.LEFT)
-        self.lat_txt = tk.StringVar(value="Latency: 0ms")
-        tk.Label(stats, textvariable=self.lat_txt, bg=self.bg_color, fg="#888", font=("Consolas", 10)).pack(side=tk.RIGHT)
-        ctrl = tk.Frame(main, bg=self.bg_color)
-        ctrl.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
-        btn_cfg = {"font": ("Segoe UI", 10, "bold"), "bd": 0, "pady": 12}
-        self.btn_toggle = tk.Button(ctrl, text="START BOT", bg="#00cc66", fg="#000", command=self.controller.toggle, **btn_cfg)
-        self.btn_toggle.pack(fill=tk.X, pady=6)
-        tk.Label(ctrl, text="Configuration", bg=self.bg_color, fg="#666", font=("Arial", 9, "italic")).pack(pady=(12, 4))
-        self.make_slider(ctrl, "Click Delay (ms)", 1, 100, "click_delay", self.controller.config["click_delay"])
-        self.make_slider(ctrl, "Color Tolerance", 0, 100, "tolerance", self.controller.config["color_tolerance"])
-        act_frm = tk.Frame(ctrl, bg=self.bg_color)
-        act_frm.pack(fill=tk.X, pady=10)
-        tk.Button(act_frm, text="Select Region", bg="#2a2a35", fg="#fff", command=self.controller.select_region, **btn_cfg).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
-        tk.Button(act_frm, text="Sample Color", bg="#2a2a35", fg="#fff", command=self.controller.sample_color, **btn_cfg).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
-        prof_frm = tk.Frame(main, bg=self.bg_color)
-        prof_frm.pack(fill=tk.X, padx=12, pady=(0, 8))
-        tk.Button(prof_frm, text="Save", bg="#1a1a25", fg="#aaa", command=self.save_profile, font=("Arial", 8)).pack(side=tk.LEFT, padx=4)
-        tk.Button(prof_frm, text="Load", bg="#1a1a25", fg="#aaa", command=self.load_profile, font=("Arial", 8)).pack(side=tk.LEFT, padx=4)
-        tk.Label(main, text="Hover to Interact | Move Away to Play", bg=self.bg_color, fg="#333", font=("Arial", 7)).pack(side=tk.BOTTOM, pady=4)
-
-    def make_slider(self, parent, label, min_v, max_v, key, init):
-        frm = tk.Frame(parent, bg=self.bg_color)
-        frm.pack(fill=tk.X, pady=4)
-        tk.Label(frm, text=label, bg=self.bg_color, fg="#aaa", font=("Arial", 8)).pack(anchor=tk.W)
-        var = tk.DoubleVar(value=init)
-        slider = ttk.Scale(frm, from_=min_v, to=max_v, variable=var, orient=tk.HORIZONTAL, command=lambda e: self.update_setting(key, var.get()))
-        slider.pack(fill=tk.X)
-
-    def update_setting(self, key, val):
-        if key == "click_delay": self.controller.config[key] = int(val)
-        elif key == "tolerance": self.controller.config["color_tolerance"] = float(val)
-        else: self.controller.config[key] = float(val)
-
-    def update_led(self, active):
-        self.led.delete("all")
-        color = "#00ff00" if active else "#222"
-        glow = "#00ff00" if active else "#000"
-        self.led.create_oval(3, 3, 19, 19, fill=color, outline=glow, width=2)
-
-    def refresh_preview(self):
-        if self.controller.frame is not None:
-            try:
-                img = cv2.cvtColor(self.controller.frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(img)
-                img = img.resize((160, 90), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                self.preview_lbl.config(image=photo)
-                self.preview_lbl.image = photo
-            except: pass
-        self.after(50, self.refresh_preview)
-
-    def update_stats(self, cps, lat):
-        self.cps_txt.set(f"CPS: {cps:.1f}")
-        self.lat_txt.set(f"Latency: {lat}ms")
-        if self.controller.active:
-            self.btn_toggle.config(text="STOP BOT", bg="#ff3333", fg="#fff")
-            self.update_led(True)
-        else:
-            self.btn_toggle.config(text="START BOT", bg="#00cc66", fg="#000")
-            self.update_led(False)
-
-    def start_drag(self, e): self.drag_start = (e.x, e.y)
-    def do_drag(self, e):
-        if self.drag_start:
-            dx = e.x - self.drag_start[0]
-            dy = e.y - self.drag_start[1]
-            self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
-
-    def save_profile(self):
-        name = simpledialog.askstring("Save Profile", "Profile name:")
-        if name:
-            with open(f"profile_{name}.json", 'w') as f:
-                json.dump(self.controller.config.data, f, indent=4)
-            messagebox.showinfo("Saved", f"Profile '{name}' saved!")
-
-    def load_profile(self):
-        files = [f for f in os.listdir('.') if f.startswith('profile_') and f.endswith('.json')]
-        if not files:
-            messagebox.showinfo("Profiles", "No saved profiles found.")
-            return
-        names = "\n".join([f.replace('profile_', '').replace('.json', '') for f in files])
-        messagebox.showinfo("Available Profiles", names + "\n\n(Manual load via config edit)")
-
-class ClickbotController:
-    def __init__(self):
-        self.config = Config()
-        self.active = False
-        self.mouse = Controller()
-        self.frame = None
-        self.cps_data = []
-        self.last_click = 0
-        self.lock = threading.Lock()
-        self.stop_flag = threading.Event()
-        self.thread_capture = None
-        self.thread_logic = None
-        self.ui = GhostOverlay(self)
-        self.auto_snap()
-
-    def auto_snap(self):
-        def enum_cb(hwnd, lst):
-            if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if "Geometry Dash" in title: lst.append(hwnd)
-            return True
-        wins = []
-        win32gui.EnumWindows(enum_cb, wins)
-        if wins:
-            hwnd = wins[0]
-            rect = win32gui.GetWindowRect(hwnd)
-            x, y, w, h = rect
-            self.ui.geometry(f"+{x + w - 440}+{y + 60}")
-            print(f"Snapped to GD at {x + w - 440}, {y + 60}")
-        else:
-            print("Geometry Dash not found - position manually")
-
-    def launch_threads(self):
-        self.stop_flag.clear()
-        self.thread_capture = threading.Thread(target=self.capture_loop, daemon=True)
-        self.thread_logic = threading.Thread(target=self.logic_loop, daemon=True)
-        self.thread_capture.start()
-        self.thread_logic.start()
-
-    def halt_threads(self):
-        self.stop_flag.set()
-        if self.thread_capture: self.thread_capture.join(timeout=1)
-        if self.thread_logic: self.thread_logic.join(timeout=1)
-
-    def capture_loop(self):
-        with mss.mss() as sct:
-            while not self.stop_flag.is_set():
-                if self.config["region"]:
-                    mon = {"left": self.config["region"][0], "top": self.config["region"][1], "width": self.config["region"][2], "height": self.config["region"][3]}
-                    grab = sct.grab(mon)
-                    frame = np.array(grab)
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                    with self.lock: self.frame = frame
-                else: time.sleep(0.1)
-                time.sleep(0.008)
-
-    def logic_loop(self):
-        while not self.stop_flag.is_set():
-            if self.active and self.config["region"] and self.frame is not None:
-                t0 = time.time()
-                with self.lock: frm = self.frame.copy()
-                target = np.array(self.config["target_color"], dtype=np.uint8)
-                tol = self.config["color_tolerance"]
-                lower = np.maximum(target - tol, 0)
-                upper = np.minimum(target + tol, 255)
-                mask = cv2.inRange(frm, lower, upper)
-                if np.any(mask):
-                    now = time.time()
-                    if (now - self.last_click) * 1000 >= self.config["click_delay"]:
-                        self.mouse.click(Button.left)
-                        self.last_click = now
-                elapsed = time.time() - t0
-                self.cps_data.append(1/elapsed if elapsed > 0 else 0)
-                if len(self.cps_data) > 20: self.cps_data.pop(0)
-                avg_cps = sum(self.cps_data) / len(self.cps_data)
-                try: self.ui.after(0, self.ui.update_stats, avg_cps, int(elapsed*1000))
-                except: pass
-            else:
-                self.cps_data = []
-                try: self.ui.after(0, self.ui.update_stats, 0, 0)
-                except: pass
-            time.sleep(0.001)
-
-    def toggle(self):
-        self.active = not self.active
-        if self.active:
-            if not self.config["region"]:
-                messagebox.showwarning("Warning", "Select a region first!")
-                self.active = False
-                return
-            self.launch_threads()
-        else: self.halt_threads()
-
-    def select_region(self):
-        self.ui.withdraw()
-        time.sleep(0.3)
-        try:
-            import screeninfo
-            mon = screeninfo.get_monitors()[0]
-            cx, cy = mon.width // 2, mon.height // 2
-            self.config["region"] = [cx - 50, cy - 50, 100, 100]
-            messagebox.showinfo("Region Set", f"Center region selected.\nEdit config for precision.")
-        except: self.config["region"] = [100, 100, 100, 100]
-        self.ui.deiconify()
-        self.ui.focus_force()
-
-    def sample_color(self):
-        if self.frame is not None:
-            h, w, _ = self.frame.shape
-            center = self.frame[h//2, w//2]
-            self.config["target_color"] = center.tolist()
-            messagebox.showinfo("Sampled", f"Color (BGR): {center}")
-        else: messagebox.showwarning("No Feed", "Start bot or set region first")
+    def reset_config(self):
+        self.config = DEFAULT_CONFIG.copy()
+        self.save_config()
+        self.log("Config Reset", "orange")
 
     def run(self):
-        self.ui.mainloop()
-        self.halt_threads()
+        self.root.mainloop()
 
 if __name__ == "__main__":
-    try: import screeninfo
-    except ImportError: os.system("pip install screeninfo --quiet")
-    app = ClickbotController()
+    app = GDOverlay()
     app.run()
