@@ -27,6 +27,9 @@ WM_NCHITTEST = 0x0084
 HTTRANSPARENT = -1
 HTCLIENT = 1
 
+# Create a C function type for the WndProc callback
+WNDPROC_TYPE = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p)
+
 class CheatConfig:
     def __init__(self):
         self.click_delay = 10  # ms
@@ -69,7 +72,7 @@ class GDClickbotUnified:
         self.drag_offset_y = 0
         self.hwnd = None
         self.old_wndproc = None
-        self.wndproc_callback = None
+        self.wndproc_ref = None  # Keep reference to prevent GC
 
         # Runtime state
         self.cps = 0
@@ -276,34 +279,46 @@ class GDClickbotUnified:
 
     def set_click_through(self, enable):
         """Makes the window click-through using proper WS_EX_LAYERED approach"""
-        self.is_click_through = enable
-        
+        # Cache hwnd early
         if not hasattr(self, 'hwnd') or self.hwnd is None:
             try:
                 self.hwnd = self.root.winfo_id()
             except:
                 return
-
-        ex_style = win32gui.GetWindowLong(self.hwnd, win32con.GWL_EXSTYLE)
-
-        if enable:
-            # Add Transparent and Layered - this makes clicks pass through to GD
-            ex_style |= win32con.WS_EX_TRANSPARENT | win32con.WS_EX_LAYERED
-            # Set opacity (200/255 for visibility but still see-through)
-            ctypes.windll.user32.SetLayeredWindowAttributes(
-                self.hwnd,
-                0,
-                200,
-                win32con.LWA_ALPHA
-            )
-        else:
-            # Remove Transparent - this makes window clickable again
-            ex_style &= ~win32con.WS_EX_TRANSPARENT
-            
-        win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, ex_style)
         
-        # Force window refresh to apply changes immediately
-        self.root.update_idletasks()
+        # Don't do anything if state hasn't changed
+        if self.is_click_through == enable:
+            return
+            
+        self.is_click_through = enable
+
+        try:
+            ex_style = win32gui.GetWindowLong(self.hwnd, win32con.GWL_EXSTYLE)
+
+            if enable:
+                # Add Transparent and Layered - this makes clicks pass through to GD
+                new_ex_style = ex_style | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_LAYERED
+                # Set opacity (200/255 for visibility but still see-through)
+                ctypes.windll.user32.SetLayeredWindowAttributes(
+                    self.hwnd,
+                    0,
+                    200,
+                    win32con.LWA_ALPHA
+                )
+            else:
+                # Remove Transparent - this makes window clickable again
+                new_ex_style = ex_style & ~win32con.WS_EX_TRANSPARENT
+                
+            # Only update if changed
+            if new_ex_style != ex_style:
+                win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, new_ex_style)
+            
+            # Force window refresh to apply changes immediately
+            self.root.update_idletasks()
+        except Exception as e:
+            # Silently fail on Windows API errors to avoid crashing
+            if hasattr(self, 'debug_logging_var') and self.debug_logging_var.get():
+                self.log(f"Click-through error: {e}")
 
     def create_gui(self):
         self.root = tk.Tk()
@@ -389,11 +404,22 @@ class GDClickbotUnified:
         # Make controls interactive (remove click-through when hovering them)
         self.setup_control_bindings()
         
-        # Bind tab control for interactivity
-        tab_control.bind("<Enter>", lambda e: self.set_click_through(False))
-        tab_control.bind("<Leave>", lambda e: self.set_click_through(self.is_click_through))
-        tab_control.bind("<Button-1>", lambda e: self.set_click_through(False))
-        tab_control.bind("<ButtonRelease-1>", lambda e: self.set_click_through(True))
+        # Bind tab control for interactivity - use lambda with state tracking
+        def on_enter(e):
+            self.set_click_through(False)
+        def on_leave(e):
+            # Only restore click-through if mouse is not over any child widget
+            self.root.after(50, lambda: self.set_click_through(True))
+        def on_press(e):
+            self.set_click_through(False)
+        def on_release(e):
+            # Delay restoring click-through slightly to ensure click registers
+            self.root.after(100, lambda: self.set_click_through(True))
+        
+        tab_control.bind("<Enter>", on_enter)
+        tab_control.bind("<Leave>", on_leave)
+        tab_control.bind("<Button-1>", on_press)
+        tab_control.bind("<ButtonRelease-1>", on_release)
         
         # Add FocusLost binding to restore click-through when clicking outside (e.g., on GD)
         self.root.bind("<FocusOut>", lambda e: self.set_click_through(True))
@@ -627,31 +653,32 @@ class GDClickbotUnified:
                    self.led_lbl, self.cps_lbl, self.info_region, self.info_color,
                    self.preview_lbl]
         for w in widgets:
-            w.bind("<Enter>", lambda e: self.set_click_through(False))
-            w.bind("<Leave>", lambda e: self.set_click_through(self.is_click_through))
-            # Also bind click events to ensure interactivity
-            w.bind("<Button-1>", lambda e: self.set_click_through(False))
-            w.bind("<ButtonRelease-1>", lambda e: self.set_click_through(True))
+            if w is not None:
+                w.bind("<Enter>", lambda e: self.set_click_through(False))
+                w.bind("<Leave>", lambda e: self.root.after(50, lambda: self.set_click_through(True)))
+                # Also bind click events to ensure interactivity
+                w.bind("<Button-1>", lambda e: self.set_click_through(False))
+                w.bind("<ButtonRelease-1>", lambda e: self.root.after(100, lambda: self.set_click_through(True)))
         
         # Bind scales for interactivity
         if hasattr(self, 'delay_scale'):
             self.delay_scale.bind("<Enter>", lambda e: self.set_click_through(False))
-            self.delay_scale.bind("<Leave>", lambda e: self.set_click_through(self.is_click_through))
+            self.delay_scale.bind("<Leave>", lambda e: self.root.after(50, lambda: self.set_click_through(True)))
             self.delay_scale.bind("<Button-1>", lambda e: self.set_click_through(False))
-            self.delay_scale.bind("<ButtonRelease-1>", lambda e: self.set_click_through(True))
+            self.delay_scale.bind("<ButtonRelease-1>", lambda e: self.root.after(100, lambda: self.set_click_through(True)))
         
         if hasattr(self, 'tol_scale'):
             self.tol_scale.bind("<Enter>", lambda e: self.set_click_through(False))
-            self.tol_scale.bind("<Leave>", lambda e: self.set_click_through(self.is_click_through))
+            self.tol_scale.bind("<Leave>", lambda e: self.root.after(50, lambda: self.set_click_through(True)))
             self.tol_scale.bind("<Button-1>", lambda e: self.set_click_through(False))
-            self.tol_scale.bind("<ButtonRelease-1>", lambda e: self.set_click_through(True))
+            self.tol_scale.bind("<ButtonRelease-1>", lambda e: self.root.after(100, lambda: self.set_click_through(True)))
         
         # Bind combobox for interactivity
         if hasattr(self, 'profile_combo'):
             self.profile_combo.bind("<Enter>", lambda e: self.set_click_through(False))
-            self.profile_combo.bind("<Leave>", lambda e: self.set_click_through(self.is_click_through))
+            self.profile_combo.bind("<Leave>", lambda e: self.root.after(50, lambda: self.set_click_through(True)))
             self.profile_combo.bind("<Button-1>", lambda e: self.set_click_through(False))
-            self.profile_combo.bind("<ButtonRelease-1>", lambda e: self.set_click_through(True))
+            self.profile_combo.bind("<ButtonRelease-1>", lambda e: self.root.after(100, lambda: self.set_click_through(True)))
         
         # Bind checkbuttons separately (they need special handling)
         checkbuttons = [getattr(self, 'chk_esp', None), getattr(self, 'chk_coords', None), 
@@ -661,9 +688,9 @@ class GDClickbotUnified:
         for cb in checkbuttons:
             if cb is not None:
                 cb.bind("<Enter>", lambda e: self.set_click_through(False))
-                cb.bind("<Leave>", lambda e: self.set_click_through(self.is_click_through))
+                cb.bind("<Leave>", lambda e: self.root.after(50, lambda: self.set_click_through(True)))
                 cb.bind("<Button-1>", lambda e: self.set_click_through(False))
-                cb.bind("<ButtonRelease-1>", lambda e: self.set_click_through(True))
+                cb.bind("<ButtonRelease-1>", lambda e: self.root.after(100, lambda: self.set_click_through(True)))
 
     def on_setting_change(self, name, value):
         if name == "delay":
