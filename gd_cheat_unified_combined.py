@@ -371,6 +371,12 @@ class GDClickbotUnified:
         # Make controls interactive (remove click-through when hovering them)
         self.setup_control_bindings()
         
+        # Bind tab control for interactivity
+        tab_control.bind("<Enter>", lambda e: self.set_click_through(False))
+        tab_control.bind("<Leave>", lambda e: self.set_click_through(True))
+        tab_control.bind("<Button-1>", lambda e: self.set_click_through(False))
+        tab_control.bind("<ButtonRelease-1>", lambda e: self.root.after(200, lambda: self.set_click_through(True)))
+        
         # Initial state - start visible and interactive so user can see it
         self.set_click_through(False)
         
@@ -403,17 +409,17 @@ class GDClickbotUnified:
         lbl_delay.pack(anchor="w")
         
         self.delay_var = tk.IntVar(value=self.config.click_delay)
-        delay_scale = ttk.Scale(ctrl_frame, from_=1, to=100, variable=self.delay_var, orient=tk.HORIZONTAL,
+        self.delay_scale = ttk.Scale(ctrl_frame, from_=1, to=100, variable=self.delay_var, orient=tk.HORIZONTAL,
                                 command=lambda v: self.on_setting_change("delay", int(v)))
-        delay_scale.pack(fill=tk.X)
+        self.delay_scale.pack(fill=tk.X)
         
         lbl_tol = tk.Label(ctrl_frame, text="Color Tolerance", bg=self.bg_color, fg=self.text_color, font=("Consolas", 9))
         lbl_tol.pack(anchor="w", pady=(10,0))
         
         self.tol_var = tk.IntVar(value=self.config.color_tolerance)
-        tol_scale = ttk.Scale(ctrl_frame, from_=0, to=100, variable=self.tol_var, orient=tk.HORIZONTAL,
+        self.tol_scale = ttk.Scale(ctrl_frame, from_=0, to=100, variable=self.tol_var, orient=tk.HORIZONTAL,
                               command=lambda v: self.on_setting_change("tolerance", int(v)))
-        tol_scale.pack(fill=tk.X)
+        self.tol_scale.pack(fill=tk.X)
         
         # Buttons Row
         btn_row = tk.Frame(self.tab_aimbot, bg=self.bg_color)
@@ -450,18 +456,18 @@ class GDClickbotUnified:
         esp_frame.pack(fill=tk.X, padx=10, pady=5)
         
         self.esp_var = tk.BooleanVar(value=False)
-        chk_esp = tk.Checkbutton(esp_frame, text="Enable ESP Overlay", variable=self.esp_var, 
+        self.chk_esp = tk.Checkbutton(esp_frame, text="Enable ESP Overlay", variable=self.esp_var, 
                                 bg=self.frame_color, fg="#ccc", selectcolor="#333333",
                                 activebackground=self.frame_color, activeforeground="#ccc",
                                 font=("Consolas", 9), command=self.toggle_esp)
-        chk_esp.pack(pady=5, padx=10, anchor=tk.W)
+        self.chk_esp.pack(pady=5, padx=10, anchor=tk.W)
         
         self.show_coords_var = tk.BooleanVar(value=True)
-        chk_coords = tk.Checkbutton(esp_frame, text="Show Coordinates", variable=self.show_coords_var,
+        self.chk_coords = tk.Checkbutton(esp_frame, text="Show Coordinates", variable=self.show_coords_var,
                                    bg=self.frame_color, fg="#ccc", selectcolor="#333333",
                                    activebackground=self.frame_color, activeforeground="#ccc",
                                    font=("Consolas", 9))
-        chk_coords.pack(pady=5, padx=10, anchor=tk.W)
+        self.chk_coords.pack(pady=5, padx=10, anchor=tk.W)
         
         # Color Picker for ESP
         color_frame = tk.Frame(esp_frame, bg=self.frame_color)
@@ -477,18 +483,18 @@ class GDClickbotUnified:
         perf_frame.pack(fill=tk.X, padx=10, pady=5)
         
         self.fps_var = tk.BooleanVar(value=True)
-        chk_fps = tk.Checkbutton(perf_frame, text="Show FPS Counter", variable=self.fps_var,
+        self.chk_fps = tk.Checkbutton(perf_frame, text="Show FPS Counter", variable=self.fps_var,
                                 bg=self.frame_color, fg="#ccc", selectcolor="#333333",
                                 activebackground=self.frame_color, activeforeground="#ccc",
                                 font=("Consolas", 9))
-        chk_fps.pack(pady=5, padx=10, anchor=tk.W)
+        self.chk_fps.pack(pady=5, padx=10, anchor=tk.W)
         
         self.vsync_var = tk.BooleanVar(value=False)
-        chk_vsync = tk.Checkbutton(perf_frame, text="Force VSync", variable=self.vsync_var,
+        self.chk_vsync = tk.Checkbutton(perf_frame, text="Force VSync", variable=self.vsync_var,
                                   bg=self.frame_color, fg="#ccc", selectcolor="#333333",
                                   activebackground=self.frame_color, activeforeground="#ccc",
                                   font=("Consolas", 9))
-        chk_vsync.pack(pady=5, padx=10, anchor=tk.W)
+        self.chk_vsync.pack(pady=5, padx=10, anchor=tk.W)
         
         # Info label
         tk.Label(self.tab_visuals, text="(More visuals coming soon...)", bg=self.bg_color, 
@@ -524,9 +530,9 @@ class GDClickbotUnified:
         profile_frame.pack(pady=5)
         tk.Label(profile_frame, text="Active Profile:", bg=self.bg_color, fg="#aaa", font=("Consolas", 8)).pack(side=tk.LEFT, padx=5)
         self.profile_var = tk.StringVar(value="Default")
-        profile_combo = ttk.Combobox(profile_frame, textvariable=self.profile_var, values=["Default", "Practice Mode", "Demon Rush"], state="readonly", width=15)
-        profile_combo.pack(side=tk.LEFT)
-        profile_combo.bind("<<ComboboxSelected>>", lambda e: self.load_profile())
+        self.profile_combo = ttk.Combobox(profile_frame, textvariable=self.profile_var, values=["Default", "Practice Mode", "Demon Rush"], state="readonly", width=15)
+        self.profile_combo.pack(side=tk.LEFT)
+        self.profile_combo.bind("<<ComboboxSelected>>", lambda e: self.load_profile())
         
         # Hotkeys Section
         tk.Label(self.tab_config, text="Hotkeys", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=(20, 5))
@@ -548,11 +554,11 @@ class GDClickbotUnified:
         btn_attach.pack(fill=tk.X, pady=5, padx=10)
         
         self.auto_snap_var = tk.BooleanVar(value=True)
-        chk_auto_snap = tk.Checkbutton(self.tab_config, text="Auto-snap to GD every 5s", variable=self.auto_snap_var,
+        self.chk_auto_snap = tk.Checkbutton(self.tab_config, text="Auto-snap to GD every 5s", variable=self.auto_snap_var,
                                       bg=self.bg_color, fg="#aaa", selectcolor="#333333",
                                       activebackground=self.bg_color, activeforeground="#aaa",
                                       font=("Consolas", 8))
-        chk_auto_snap.pack(anchor=tk.W, padx=25, pady=2)
+        self.chk_auto_snap.pack(anchor=tk.W, padx=25, pady=2)
         
         # Advanced Settings
         tk.Label(self.tab_config, text="Advanced", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=(15, 5))
@@ -561,18 +567,18 @@ class GDClickbotUnified:
         adv_frame.pack(fill=tk.X, padx=10, pady=5)
         
         self.debug_var = tk.BooleanVar(value=False)
-        chk_debug = tk.Checkbutton(adv_frame, text="Debug Logging", variable=self.debug_var,
+        self.chk_debug = tk.Checkbutton(adv_frame, text="Debug Logging", variable=self.debug_var,
                                   bg=self.bg_color, fg="#aaa", selectcolor="#333333",
                                   activebackground=self.bg_color, activeforeground="#aaa",
                                   font=("Consolas", 8))
-        chk_debug.pack(anchor=tk.W)
+        self.chk_debug.pack(anchor=tk.W)
         
         self.topmost_var = tk.BooleanVar(value=True)
-        chk_topmost = tk.Checkbutton(adv_frame, text="Always On Top", variable=self.topmost_var, command=self.toggle_topmost,
+        self.chk_topmost = tk.Checkbutton(adv_frame, text="Always On Top", variable=self.topmost_var, command=self.toggle_topmost,
                                     bg=self.bg_color, fg="#aaa", selectcolor="#333333",
                                     activebackground=self.bg_color, activeforeground="#aaa",
                                     font=("Consolas", 8))
-        chk_topmost.pack(anchor=tk.W, pady=2)
+        self.chk_topmost.pack(anchor=tk.W, pady=2)
         
         # Helper Text
         lbl_help = tk.Label(self.tab_config, text=f"☠ Drag title bar to move menu\n☠ Press [{HOTKEY_TOGGLE.upper()}] anywhere to toggle menu", 
@@ -602,6 +608,41 @@ class GDClickbotUnified:
         for w in widgets:
             w.bind("<Enter>", lambda e: self.set_click_through(False))
             w.bind("<Leave>", lambda e: self.set_click_through(True))
+            # Also bind click events to ensure interactivity
+            w.bind("<Button-1>", lambda e: self.set_click_through(False))
+            w.bind("<ButtonRelease-1>", lambda e: self.root.after(200, lambda: self.set_click_through(True)))
+        
+        # Bind scales for interactivity
+        if hasattr(self, 'delay_scale'):
+            self.delay_scale.bind("<Enter>", lambda e: self.set_click_through(False))
+            self.delay_scale.bind("<Leave>", lambda e: self.set_click_through(True))
+            self.delay_scale.bind("<Button-1>", lambda e: self.set_click_through(False))
+            self.delay_scale.bind("<ButtonRelease-1>", lambda e: self.root.after(200, lambda: self.set_click_through(True)))
+        
+        if hasattr(self, 'tol_scale'):
+            self.tol_scale.bind("<Enter>", lambda e: self.set_click_through(False))
+            self.tol_scale.bind("<Leave>", lambda e: self.set_click_through(True))
+            self.tol_scale.bind("<Button-1>", lambda e: self.set_click_through(False))
+            self.tol_scale.bind("<ButtonRelease-1>", lambda e: self.root.after(200, lambda: self.set_click_through(True)))
+        
+        # Bind combobox for interactivity
+        if hasattr(self, 'profile_combo'):
+            self.profile_combo.bind("<Enter>", lambda e: self.set_click_through(False))
+            self.profile_combo.bind("<Leave>", lambda e: self.set_click_through(True))
+            self.profile_combo.bind("<Button-1>", lambda e: self.set_click_through(False))
+            self.profile_combo.bind("<ButtonRelease-1>", lambda e: self.root.after(200, lambda: self.set_click_through(True)))
+        
+        # Bind checkbuttons separately (they need special handling)
+        checkbuttons = [getattr(self, 'chk_esp', None), getattr(self, 'chk_coords', None), 
+                        getattr(self, 'chk_fps', None), getattr(self, 'chk_vsync', None),
+                        getattr(self, 'chk_auto_snap', None), getattr(self, 'chk_debug', None),
+                        getattr(self, 'chk_topmost', None)]
+        for cb in checkbuttons:
+            if cb is not None:
+                cb.bind("<Enter>", lambda e: self.set_click_through(False))
+                cb.bind("<Leave>", lambda e: self.set_click_through(True))
+                cb.bind("<Button-1>", lambda e: self.set_click_through(False))
+                cb.bind("<ButtonRelease-1>", lambda e: self.root.after(200, lambda: self.set_click_through(True)))
 
     def on_setting_change(self, name, value):
         if name == "delay":
