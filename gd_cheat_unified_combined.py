@@ -290,6 +290,15 @@ class GDClickbotUnified:
         if self.is_click_through == enable:
             return
             
+        # Prevent rapid state changes that cause blinking
+        import time
+        if not hasattr(self, 'last_state_change'):
+            self.last_state_change = 0
+        current_time = time.time()
+        if current_time - self.last_state_change < 0.15:  # Minimum 150ms between state changes
+            return
+        
+        self.last_state_change = current_time
         self.is_click_through = enable
 
         try:
@@ -302,25 +311,26 @@ class GDClickbotUnified:
                 # Remove Transparent - this makes window clickable again
                 new_ex_style = ex_style & ~win32con.WS_EX_TRANSPARENT
                 
-            # Always update the window style
-            win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, new_ex_style)
-            
-            # Set opacity only when enabling click-through
-            if enable:
-                ctypes.windll.user32.SetLayeredWindowAttributes(
+            # Only update if style actually changed
+            if new_ex_style != ex_style:
+                win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, new_ex_style)
+                
+                # Set opacity only when enabling click-through
+                if enable:
+                    ctypes.windll.user32.SetLayeredWindowAttributes(
+                        self.hwnd,
+                        0,
+                        200,
+                        win32con.LWA_ALPHA
+                    )
+                
+                # Force immediate window refresh using RedrawWindow
+                ctypes.windll.user32.RedrawWindow(
                     self.hwnd,
-                    0,
-                    200,
-                    win32con.LWA_ALPHA
+                    None,
+                    None,
+                    0x0411  # RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN
                 )
-            
-            # Force immediate window refresh using RedrawWindow
-            ctypes.windll.user32.RedrawWindow(
-                self.hwnd,
-                None,
-                None,
-                0x0401  # RDW_INVALIDATE | RDW_UPDATENOW
-            )
         except Exception as e:
             # Silently fail on Windows API errors to avoid crashing
             if hasattr(self, 'debug_logging_var') and self.debug_logging_var.get():
@@ -715,6 +725,22 @@ class GDClickbotUnified:
         except:
             # If any error, just restore click-through
             self.set_click_through(True)
+
+    def prevent_blink(self):
+        """Prevent rapid state changes that cause blinking"""
+        # Cancel any pending check_restore_click_through calls by not scheduling them too frequently
+        # This method is called periodically to ensure stable state
+        if not hasattr(self, 'last_state_change'):
+            self.last_state_change = 0
+        
+        import time
+        current_time = time.time()
+        
+        # If state changed very recently, delay any further changes
+        if current_time - self.last_state_change < 0.3:
+            return False
+        
+        return True
 
     def on_setting_change(self, name, value):
         if name == "delay":
