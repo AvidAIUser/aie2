@@ -1,1 +1,34 @@
-Nothing should be ignored since the changes only include source/config files (.py, .md) without any build artifacts, dependencies, or temp files.
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Build
+build/
+dist/
+target/
+```

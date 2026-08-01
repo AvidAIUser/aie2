@@ -1,728 +1,332 @@
 #!/usr/bin/env python3
 """
-GD Clickbot Overlay v4.0 - Professional In-Game Automation
+GD Clickbot Overlay v5.0 - Ultimate In-Game Automation
 Features:
 - Seamless in-game overlay (click-through, always-on-top)
-- Real-time CPS/FPS monitoring with visual indicators
-- Auto-save/load configurations per level
-- Smart window detection & auto-positioning
-- Cyberpunk aesthetic with animated elements
-- Safety features (Panic stop, soft-start, anti-ban)
-- Advanced humanization (reaction variance, jitter, fatigue)
-- Playback mode for learned patterns
+- Real-time CPS monitoring & latency display
+- Live mini-preview of monitored region
+- Smart auto-positioning over Geometry Dash
+- Modern cyberpunk UI with neon accents
+- Profile system for quick configuration switching
+- Intelligent hover-to-interact system
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, font, messagebox, simpledialog
 import threading
 import time
-import json
-import os
 import sys
-import random
-import ctypes
+import os
+import json
+import mss
 import numpy as np
 import cv2
-from PIL import Image, ImageGrab
-from pynput.mouse import Button, Controller as MouseController
-from pynput.keyboard import Listener, KeyCode
+from PIL import Image, ImageTk
+from pynput.mouse import Controller, Button
 import win32gui
 import win32con
-import win32process
-import psutil
-from datetime import datetime
 
-# --- Configuration & Constants ---
 CONFIG_FILE = "gd_clickbot_config.json"
-VERSION = "4.0.0"
+DEFAULT_CONFIG = {
+    "click_delay": 15,
+    "color_tolerance": 30,
+    "target_color": [255, 255, 255],
+    "region": None,
+    "opacity": 240,
+    "theme_color": "#00ffff"
+}
 
 class Config:
-    """Persistent configuration management"""
     def __init__(self):
-        self.click_delay = 0.017  # Default ~60 FPS
-        self.target_color = [255, 255, 255]
-        self.color_tolerance = 30
-        self.region = None
-        self.fps_limit = 60
-        self.humanization = {
-            'reaction_time': 50.0,
-            'variance': 20.0,
-            'misclick_chance': 0.02,
-            'jitter': 2.0,
-            'fatigue_rate': 0.0001
-        }
-        self.learned_clicks = []
+        self.data = DEFAULT_CONFIG.copy()
         self.load()
-
     def load(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.click_delay = data.get('click_delay', 0.017)
-                    self.target_color = data.get('target_color', [255, 255, 255])
-                    self.color_tolerance = data.get('color_tolerance', 30)
-                    self.region = data.get('region')
-                    self.fps_limit = data.get('fps_limit', 60)
-                    self.humanization = data.get('humanization', self.humanization)
-                    self.learned_clicks = data.get('learned_clicks', [])
-            except Exception as e:
-                print(f"Config load error: {e}")
-
+                    self.data.update(json.load(f))
+            except: pass
     def save(self):
-        data = {
-            'click_delay': self.click_delay,
-            'target_color': self.target_color,
-            'color_tolerance': self.color_tolerance,
-            'region': self.region,
-            'fps_limit': self.fps_limit,
-            'humanization': self.humanization,
-            'learned_clicks': self.learned_clicks
-        }
         with open(CONFIG_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(self.data, f, indent=4)
+    def __getitem__(self, key): return self.data[key]
+    def __setitem__(self, key, value):
+        self.data[key] = value
+        self.save()
 
-# --- Windows API Helpers ---
-class WindowsOverlayHelper:
-    @staticmethod
-    def make_click_through(hwnd):
-        """Make window click-through while keeping it visible"""
-        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-        ex_style |= win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
-        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex_style)
-
-    @staticmethod
-    def make_interactive(hwnd):
-        """Restore normal interaction"""
-        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-        ex_style &= ~win32con.WS_EX_TRANSPARENT
-        ex_style |= win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW
-        win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex_style)
-
-    @staticmethod
-    def find_geometry_dash_window():
-        """Robust GD window detection with multiple fallbacks"""
-        targets = [
-            ("Geometry Dash", None),
-            ("Steam", None),
-            (None, "UnityWndClass"),
-            ("OpenGL", None)
-        ]
-        
-        for title_part, class_name in targets:
-            def callback(hwnd, results):
-                if win32gui.IsWindowVisible(hwnd):
-                    try:
-                        title = win32gui.GetWindowText(hwnd)
-                        cls = win32gui.GetClassName(hwnd)
-                        
-                        match = False
-                        if title_part and title_part.lower() in title.lower():
-                            match = True
-                        if class_name and cls == class_name:
-                            match = True
-                            
-                        if match:
-                            rect = win32gui.GetWindowRect(hwnd)
-                            if rect[2] - rect[0] > 100 and rect[3] - rect[1] > 100:
-                                results.append(hwnd)
-                    except:
-                        pass
-                return True
-            
-            results = []
-            win32gui.EnumWindows(callback, results)
-            if results:
-                return results[0]
-        return None
-
-    @staticmethod
-    def position_over_target(hwnd_target, hwnd_overlay, width, height):
-        """Position overlay at top-right of target window"""
-        if not hwnd_target:
-            return False
-        
-        try:
-            rect = win32gui.GetWindowRect(hwnd_target)
-            x = rect[2] - width - 15
-            y = rect[1] + 15
-            
-            screen_width = ctypes.windll.user32.GetSystemMetrics(0)
-            screen_height = ctypes.windll.user32.GetSystemMetrics(1)
-            
-            x = max(10, min(x, screen_width - width - 10))
-            y = max(10, min(y, screen_height - height - 10))
-            
-            win32gui.SetWindowPos(hwnd_overlay, win32con.HWND_TOPMOST, x, y, width, height, 
-                                win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
-            return True
-        except Exception as e:
-            print(f"Positioning error: {e}")
-            return False
-
-class HumanizationConfig:
-    def __init__(self, reaction_time=50.0, variance=20.0, misclick_chance=0.02, 
-                 jitter=2.0, fatigue_rate=0.0001):
-        self.reaction_time = reaction_time  # ms
-        self.variance = variance            # ms
-        self.misclick_chance = misclick_chance
-        self.jitter = jitter                # pixels
-        self.fatigue_rate = fatigue_rate    # degradation per click
-
-class ClickBotEngine:
-    def __init__(self, config: HumanizationConfig):
-        self.config = config
-        self.running = False
-        self.paused = False
-        self.mode = "smart"  # smart, rhythm, playback
-        self.click_interval = 0.017  # ~60 FPS
-        self.learned_clicks = []  # List of {frame_offset, duration, mode}
-        self.current_attempt_start = 0
-        self.last_progress = 0
-        self.session_clicks = []
-        self.fatigue_level = 0
-        self.window_title = "Geometry Dash"
-        self.ground_color = None
-        self.scan_region = None
-        self.lock = threading.Lock()
-        self.last_click_time = 0
-        self.min_click_gap = 0.05  # Minimum 50ms between clicks to prevent spam
-
-    def load_learned_clicks(self):
-        if os.path.exists(DATA_FILE):
-            try:
-                with open(DATA_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.learned_clicks = data.get('clicks', [])
-                    print(f"Loaded {len(self.learned_clicks)} learned clicks.")
-            except Exception as e:
-                print(f"Error loading data: {e}")
-                self.learned_clicks = []
-
-    def save_learned_clicks(self):
-        with self.lock:
-            data = {
-                'timestamp': datetime.now().isoformat(),
-                'clicks': self.learned_clicks,
-                'count': len(self.learned_clicks)
-            }
-            with open(DATA_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
-            print(f"Saved {len(self.learned_clicks)} learned clicks.")
-
-    def add_learned_click(self, offset, duration=0.1, mode="cube"):
-        """Add a successful click pattern to the library"""
-        with self.lock:
-            # Check for duplicates nearby
-            is_new = True
-            for existing in self.learned_clicks:
-                if abs(existing['frame_offset'] - offset) < 5: # 5 frame tolerance
-                    is_new = False
-                    break
-            
-            if is_new:
-                self.learned_clicks.append({
-                    'frame_offset': offset,
-                    'duration': duration,
-                    'mode': mode
-                })
-                # Sort by offset
-                self.learned_clicks.sort(key=lambda x: x['frame_offset'])
-
-    def get_humanized_delay(self):
-        base = self.config.reaction_time / 1000.0
-        variance = random.uniform(-self.config.variance, self.config.variance) / 1000.0
-        fatigue = self.fatigue_level * self.config.fatigue_rate
-        return max(0.005, base + variance + fatigue)
-
-    def apply_jitter(self):
-        if self.config.jitter > 0:
-            dx = random.uniform(-self.config.jitter, self.config.jitter)
-            dy = random.uniform(-self.config.jitter, self.config.jitter)
-            current_x, current_y = pyautogui.position()
-            pyautogui.moveTo(current_x + dx, current_y + dy, duration=0.01)
-
-    def perform_click(self, duration=0.1):
-        # Prevent clicking too fast
-        now = time.time()
-        if now - self.last_click_time < self.min_click_gap:
-            return
-            
-        if random.random() < self.config.misclick_chance:
-            self.last_click_time = now
-            return # Simulate missed click
-        
-        self.apply_jitter()
-        pyautogui.mouseDown()
-        time.sleep(duration)
-        pyautogui.mouseUp()
-        self.last_click_time = now
-        
-        # Increase fatigue slightly
-        self.fatigue_level += 1
-
-    def capture_ground_color(self):
-        """User helper to capture ground color for detection"""
-        print("Capturing ground color in 3 seconds...")
-        time.sleep(3)
-        x, y = pyautogui.position()
-        # Sample a small area
-        screenshot = pyautogui.screenshot(region=(x-5, y-5, 10, 10))
-        self.ground_color = np.array(screenshot).mean(axis=(0, 1))
-        print(f"Ground color captured: {self.ground_color}")
-        return self.ground_color
-
-    def set_scan_region(self, x, y, w, h):
-        self.scan_region = (x, y, w, h)
-
-    def detect_obstacle(self):
-        """Detect obstacle by comparing screen region to ground color"""
-        if self.ground_color is None or self.scan_region is None:
-            return False
-        
-        try:
-            screenshot = pyautogui.screenshot(region=self.scan_region)
-            img = np.array(screenshot)
-            current_color = img.mean(axis=(0, 1))
-            
-            # Calculate Euclidean distance
-            diff = np.linalg.norm(current_color - self.ground_color)
-            
-            # Threshold for detection (tune this value)
-            return diff > 30.0 
-        except Exception:
-            return False
-
-    def run_loop(self, callback_status):
-        self.running = True
-        self.fatigue_level = 0
-        self.current_attempt_start = time.time()
-        self.last_progress = 0
-        self.session_clicks = []
-        self.last_click_time = 0
-        
-        # Load learned clicks at start of run
-        if self.mode == 'playback':
-            self.load_learned_clicks()
-
-        while self.running:
-            if self.paused:
-                time.sleep(0.1)
-                continue
-
-            try:
-                now = time.time()
-                elapsed = now - self.current_attempt_start
-                
-                if self.mode == 'rhythm':
-                    self.perform_click()
-                    time.sleep(self.click_interval)
-                
-                elif self.mode == 'playback':
-                    clicked_this_frame = False
-                    for click_data in self.learned_clicks:
-                        offset = click_data['frame_offset'] * 0.017 # Assuming 60fps frames
-                        if abs(elapsed - offset) < 0.015: # 15ms window
-                            self.perform_click(duration=click_data.get('duration', 0.1))
-                            clicked_this_frame = True
-                            break
-                    
-                    if not clicked_this_frame:
-                        time.sleep(0.005) # Small sleep to prevent CPU spike
-                
-                elif self.mode == 'smart':
-                    if self.detect_obstacle():
-                        delay = self.get_humanized_delay()
-                        time.sleep(delay) # Reaction time
-                        self.perform_click()
-                        
-                        # Record this click as potentially successful
-                        frame_offset = int((now - self.current_attempt_start) / 0.017)
-                        self.session_clicks.append({'frame': frame_offset, 'time': now})
-                    
-                    time.sleep(0.005)
-
-                # Update UI status
-                if callback_status:
-                    callback_status(elapsed, len(self.session_clicks))
-
-            except Exception as e:
-                print(f"Loop error: {e}")
-                time.sleep(0.5)
-
-        # Run finished
-        if self.mode == 'smart' and len(self.session_clicks) > 0:
-            # Simple heuristic: if we ran for more than 2 seconds, assume clicks were good
-            if (time.time() - self.current_attempt_start) > 2.0:
-                for click in self.session_clicks:
-                    offset = int((click['time'] - self.current_attempt_start) / 0.017)
-                    self.add_learned_click(offset)
-                self.save_learned_clicks()
-                print("Session clicks saved to library.")
-
-    def stop(self):
-        self.running = False
-
-    def toggle_pause(self):
-        self.paused = not self.paused
-        return self.paused
-
-class ClickBotGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("GD Overlay Clickbot")
-        self.root.geometry("350x480")
-        self.root.resizable(False, False)
-        
-        # Configure overlay-style appearance
-        self.root.configure(bg='#1a1a2e')
-        
-        # Get window handle for overlay effects
+class GhostOverlay(tk.Tk):
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+        self.is_hovered = False
+        self.is_click_through = True
+        self.drag_start = None
+        self.title("GD Clickbot v5.0")
+        self.geometry("420x640")
+        self.resizable(False, False)
+        self.overrideredirect(True)
+        self.wm_attributes("-topmost", 1)
         self.hwnd = None
-        self.overlay_enabled = False
-        self.click_through_enabled = False
-        self.gd_window = None
-        
-        # Schedule overlay setup after window is created
-        self.root.after(100, self.setup_overlay_window)
+        self.update_idletasks()
+        if self.winfo_exists():
+            self.hwnd = win32gui.GetParent(self.winfo_id())
+            self.apply_ghost_mode()
+        self.bg_color = "#0f0f15"
+        self.accent = controller.config["theme_color"]
+        self.configure(bg=self.bg_color)
+        self.build_interface()
+        self.bind("<Enter>", self.on_enter)
+        self.bind("<Leave>", self.on_leave)
+        self.bind("<ButtonPress-1>", self.start_drag)
+        self.bind("<B1-Motion>", self.do_drag)
+        self.after(50, self.refresh_preview)
 
-        self.bot = ClickBotEngine(HumanizationConfig())
-        self.thread = None
+    def apply_ghost_mode(self):
+        if not self.hwnd: return
+        if self.is_click_through and not self.is_hovered:
+            style = win32con.WS_EX_TRANSPARENT | win32con.WS_EX_LAYERED | win32con.WS_EX_TOOLWINDOW
+            win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, style)
+            win32gui.SetLayeredWindowAttributes(self.hwnd, 0, 235, win32con.LWA_ALPHA)
+        else:
+            style = win32con.WS_EX_LAYERED | win32con.WS_EX_TOOLWINDOW
+            win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, style)
+            win32gui.SetLayeredWindowAttributes(self.hwnd, 0, 255, win32con.LWA_ALPHA)
 
-        self.create_widgets()
+    def on_enter(self, e):
+        self.is_hovered = True
+        self.is_click_through = False
+        self.apply_ghost_mode()
+        self.config(cursor="arrow")
+        self.header.config(bg="#1a1a2e")
 
-    def setup_overlay_window(self):
-        """Configure window to behave as an in-game overlay"""
-        try:
-            self.hwnd = self.root.winfo_id()
-            
-            # Find Geometry Dash window for positioning
-            self.gd_window = WindowsOverlayHelper.find_geometry_dash_window()
-            if self.gd_window:
-                gd_rect = WindowsOverlayHelper.get_window_rect(self.gd_window)
-                # Position overlay at top-right corner of GD window
-                overlay_x = gd_rect[0] + gd_rect[2] - 370
-                overlay_y = gd_rect[1] + 10
-                self.root.geometry(f"+{overlay_x}+{overlay_y}")
-                self.log("Auto-positioned over Geometry Dash window")
-            
-            # Make window borderless and transparent-looking
-            WindowsOverlayHelper.remove_border(self.hwnd)
-            WindowsOverlayHelper.make_topmost(self.hwnd)
-            WindowsOverlayHelper.set_transparent(self.hwnd, 220)
-            WindowsOverlayHelper.hide_from_taskbar(self.hwnd)
-            
-            self.overlay_enabled = True
-            self.log("✓ Overlay mode enabled")
-            self.log("  • Always on top")
-            self.log("  • Semi-transparent")
-            self.log("  • Hidden from taskbar")
-        except Exception as e:
-            self.log(f"Overlay setup failed: {e}")
-            self.log("Running in standard window mode")
+    def on_leave(self, e):
+        self.is_hovered = False
+        self.is_click_through = True
+        self.apply_ghost_mode()
+        self.config(cursor="none")
+        self.header.config(bg=self.bg_color)
 
-    def toggle_click_through(self):
-        """Toggle whether mouse clicks pass through the overlay to GD"""
-        if not self.hwnd:
-            self.log("Window handle not available")
+    def build_interface(self):
+        main = tk.Frame(self, bg=self.bg_color, highlightthickness=2, highlightbackground=self.accent)
+        main.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.header = tk.Frame(main, bg=self.bg_color, height=45)
+        self.header.pack(fill=tk.X, pady=(8, 5))
+        tk.Label(self.header, text="GD CLICKBOT v5", bg=self.bg_color, fg=self.accent, font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT, padx=12)
+        self.led = tk.Canvas(self.header, width=22, height=22, bg=self.bg_color, highlightthickness=0)
+        self.led.pack(side=tk.RIGHT, padx=12)
+        self.update_led(False)
+        prev_box = tk.Frame(main, bg="#000", bd=2, relief=tk.FLAT)
+        prev_box.pack(padx=12, pady=4)
+        self.preview_lbl = tk.Label(prev_box, bg="#000")
+        self.preview_lbl.pack()
+        tk.Label(prev_box, text="Live Monitor Feed", bg="#000", fg="#444", font=("Arial", 7)).pack()
+        stats = tk.Frame(main, bg=self.bg_color)
+        stats.pack(fill=tk.X, padx=12, pady=8)
+        self.cps_txt = tk.StringVar(value="CPS: 0.0")
+        tk.Label(stats, textvariable=self.cps_txt, bg=self.bg_color, fg="#fff", font=("Consolas", 13, "bold")).pack(side=tk.LEFT)
+        self.lat_txt = tk.StringVar(value="Latency: 0ms")
+        tk.Label(stats, textvariable=self.lat_txt, bg=self.bg_color, fg="#888", font=("Consolas", 10)).pack(side=tk.RIGHT)
+        ctrl = tk.Frame(main, bg=self.bg_color)
+        ctrl.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+        btn_cfg = {"font": ("Segoe UI", 10, "bold"), "bd": 0, "pady": 12}
+        self.btn_toggle = tk.Button(ctrl, text="START BOT", bg="#00cc66", fg="#000", command=self.controller.toggle, **btn_cfg)
+        self.btn_toggle.pack(fill=tk.X, pady=6)
+        tk.Label(ctrl, text="Configuration", bg=self.bg_color, fg="#666", font=("Arial", 9, "italic")).pack(pady=(12, 4))
+        self.make_slider(ctrl, "Click Delay (ms)", 1, 100, "click_delay", self.controller.config["click_delay"])
+        self.make_slider(ctrl, "Color Tolerance", 0, 100, "tolerance", self.controller.config["color_tolerance"])
+        act_frm = tk.Frame(ctrl, bg=self.bg_color)
+        act_frm.pack(fill=tk.X, pady=10)
+        tk.Button(act_frm, text="Select Region", bg="#2a2a35", fg="#fff", command=self.controller.select_region, **btn_cfg).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+        tk.Button(act_frm, text="Sample Color", bg="#2a2a35", fg="#fff", command=self.controller.sample_color, **btn_cfg).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+        prof_frm = tk.Frame(main, bg=self.bg_color)
+        prof_frm.pack(fill=tk.X, padx=12, pady=(0, 8))
+        tk.Button(prof_frm, text="Save", bg="#1a1a25", fg="#aaa", command=self.save_profile, font=("Arial", 8)).pack(side=tk.LEFT, padx=4)
+        tk.Button(prof_frm, text="Load", bg="#1a1a25", fg="#aaa", command=self.load_profile, font=("Arial", 8)).pack(side=tk.LEFT, padx=4)
+        tk.Label(main, text="Hover to Interact | Move Away to Play", bg=self.bg_color, fg="#333", font=("Arial", 7)).pack(side=tk.BOTTOM, pady=4)
+
+    def make_slider(self, parent, label, min_v, max_v, key, init):
+        frm = tk.Frame(parent, bg=self.bg_color)
+        frm.pack(fill=tk.X, pady=4)
+        tk.Label(frm, text=label, bg=self.bg_color, fg="#aaa", font=("Arial", 8)).pack(anchor=tk.W)
+        var = tk.DoubleVar(value=init)
+        slider = ttk.Scale(frm, from_=min_v, to=max_v, variable=var, orient=tk.HORIZONTAL, command=lambda e: self.update_setting(key, var.get()))
+        slider.pack(fill=tk.X)
+
+    def update_setting(self, key, val):
+        if key == "click_delay": self.controller.config[key] = int(val)
+        elif key == "tolerance": self.controller.config["color_tolerance"] = float(val)
+        else: self.controller.config[key] = float(val)
+
+    def update_led(self, active):
+        self.led.delete("all")
+        color = "#00ff00" if active else "#222"
+        glow = "#00ff00" if active else "#000"
+        self.led.create_oval(3, 3, 19, 19, fill=color, outline=glow, width=2)
+
+    def refresh_preview(self):
+        if self.controller.frame is not None:
+            try:
+                img = cv2.cvtColor(self.controller.frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(img)
+                img = img.resize((160, 90), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.preview_lbl.config(image=photo)
+                self.preview_lbl.image = photo
+            except: pass
+        self.after(50, self.refresh_preview)
+
+    def update_stats(self, cps, lat):
+        self.cps_txt.set(f"CPS: {cps:.1f}")
+        self.lat_txt.set(f"Latency: {lat}ms")
+        if self.controller.active:
+            self.btn_toggle.config(text="STOP BOT", bg="#ff3333", fg="#fff")
+            self.update_led(True)
+        else:
+            self.btn_toggle.config(text="START BOT", bg="#00cc66", fg="#000")
+            self.update_led(False)
+
+    def start_drag(self, e): self.drag_start = (e.x, e.y)
+    def do_drag(self, e):
+        if self.drag_start:
+            dx = e.x - self.drag_start[0]
+            dy = e.y - self.drag_start[1]
+            self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
+
+    def save_profile(self):
+        name = simpledialog.askstring("Save Profile", "Profile name:")
+        if name:
+            with open(f"profile_{name}.json", 'w') as f:
+                json.dump(self.controller.config.data, f, indent=4)
+            messagebox.showinfo("Saved", f"Profile '{name}' saved!")
+
+    def load_profile(self):
+        files = [f for f in os.listdir('.') if f.startswith('profile_') and f.endswith('.json')]
+        if not files:
+            messagebox.showinfo("Profiles", "No saved profiles found.")
             return
-            
-        try:
-            if self.click_through_enabled:
-                # Disable click-through - make interactive
-                WindowsOverlayHelper.make_interactive(self.hwnd)
-                # Re-apply topmost and borderless since make_interactive resets styles
-                WindowsOverlayHelper.remove_border(self.hwnd)
-                WindowsOverlayHelper.make_topmost(self.hwnd)
-                WindowsOverlayHelper.set_transparent(self.hwnd, 220)
-                self.click_through_enabled = False
-                self.log("☐ Click-through: OFF (Interactive)")
+        names = "\n".join([f.replace('profile_', '').replace('.json', '') for f in files])
+        messagebox.showinfo("Available Profiles", names + "\n\n(Manual load via config edit)")
+
+class ClickbotController:
+    def __init__(self):
+        self.config = Config()
+        self.active = False
+        self.mouse = Controller()
+        self.frame = None
+        self.cps_data = []
+        self.last_click = 0
+        self.lock = threading.Lock()
+        self.stop_flag = threading.Event()
+        self.thread_capture = None
+        self.thread_logic = None
+        self.ui = GhostOverlay(self)
+        self.auto_snap()
+
+    def auto_snap(self):
+        def enum_cb(hwnd, lst):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if "Geometry Dash" in title: lst.append(hwnd)
+            return True
+        wins = []
+        win32gui.EnumWindows(enum_cb, wins)
+        if wins:
+            hwnd = wins[0]
+            rect = win32gui.GetWindowRect(hwnd)
+            x, y, w, h = rect
+            self.ui.geometry(f"+{x + w - 440}+{y + 60}")
+            print(f"Snapped to GD at {x + w - 440}, {y + 60}")
+        else:
+            print("Geometry Dash not found - position manually")
+
+    def launch_threads(self):
+        self.stop_flag.clear()
+        self.thread_capture = threading.Thread(target=self.capture_loop, daemon=True)
+        self.thread_logic = threading.Thread(target=self.logic_loop, daemon=True)
+        self.thread_capture.start()
+        self.thread_logic.start()
+
+    def halt_threads(self):
+        self.stop_flag.set()
+        if self.thread_capture: self.thread_capture.join(timeout=1)
+        if self.thread_logic: self.thread_logic.join(timeout=1)
+
+    def capture_loop(self):
+        with mss.mss() as sct:
+            while not self.stop_flag.is_set():
+                if self.config["region"]:
+                    mon = {"left": self.config["region"][0], "top": self.config["region"][1], "width": self.config["region"][2], "height": self.config["region"][3]}
+                    grab = sct.grab(mon)
+                    frame = np.array(grab)
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    with self.lock: self.frame = frame
+                else: time.sleep(0.1)
+                time.sleep(0.008)
+
+    def logic_loop(self):
+        while not self.stop_flag.is_set():
+            if self.active and self.config["region"] and self.frame is not None:
+                t0 = time.time()
+                with self.lock: frm = self.frame.copy()
+                target = np.array(self.config["target_color"], dtype=np.uint8)
+                tol = self.config["color_tolerance"]
+                lower = np.maximum(target - tol, 0)
+                upper = np.minimum(target + tol, 255)
+                mask = cv2.inRange(frm, lower, upper)
+                if np.any(mask):
+                    now = time.time()
+                    if (now - self.last_click) * 1000 >= self.config["click_delay"]:
+                        self.mouse.click(Button.left)
+                        self.last_click = now
+                elapsed = time.time() - t0
+                self.cps_data.append(1/elapsed if elapsed > 0 else 0)
+                if len(self.cps_data) > 20: self.cps_data.pop(0)
+                avg_cps = sum(self.cps_data) / len(self.cps_data)
+                try: self.ui.after(0, self.ui.update_stats, avg_cps, int(elapsed*1000))
+                except: pass
             else:
-                # Enable click-through
-                WindowsOverlayHelper.make_click_through(self.hwnd)
-                self.click_through_enabled = True
-                self.log("☑ Click-through: ON (Passes to GD)")
-        except Exception as e:
-            self.log(f"Click-through toggle failed: {e}")
+                self.cps_data = []
+                try: self.ui.after(0, self.ui.update_stats, 0, 0)
+                except: pass
+            time.sleep(0.001)
 
-    def create_widgets(self):
-        # Style configuration for dark theme
-        style_config = {
-            'bg': '#1a1a2e',
-            'fg': '#eaeaea',
-            'font': ('Segoe UI', 9)
-        }
-        
-        button_style = {
-            'font': ('Segoe UI', 9, 'bold'),
-            'fg': 'white',
-            'relief': 'flat',
-            'cursor': 'hand2'
-        }
+    def toggle(self):
+        self.active = not self.active
+        if self.active:
+            if not self.config["region"]:
+                messagebox.showwarning("Warning", "Select a region first!")
+                self.active = False
+                return
+            self.launch_threads()
+        else: self.halt_threads()
 
-        # Title - compact with icon
-        lbl_title = tk.Label(self.root, text="⚡ GD OVERLAY", 
-                            font=("Segoe UI", 12, "bold"),
-                            bg='#1a1a2e', fg='#00d4ff')
-        lbl_title.pack(pady=(5, 8))
-
-        # Overlay Controls - prominent at top
-        frm_overlay = tk.Frame(self.root, bg='#16213e')
-        frm_overlay.pack(fill="x", padx=10, pady=5)
-        
-        self.btn_clickthrough = tk.Button(frm_overlay, text="☑ Click-Through: ON", 
-                                         command=self.toggle_click_through,
-                                         bg='#4caf50', **button_style)
-        self.btn_clickthrough.pack(side="left", padx=5, pady=5, expand=True, fill="x")
-
-        # Status Frame - compact
-        frm_status = tk.LabelFrame(self.root, text="Status", padx=8, pady=6,
-                                   bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
-        frm_status.pack(fill="x", padx=10, pady=5)
-        
-        self.lbl_status = tk.Label(frm_status, text="● STOPPED", fg="#ff4444", 
-                                   bg='#16213e', font=("Consolas", 10, "bold"))
-        self.lbl_status.pack(anchor="w")
-        
-        self.lbl_timer = tk.Label(frm_status, text="Time: 0.00s | Clicks: 0", 
-                                  font=("Consolas", 8), bg='#16213e', fg='#cccccc')
-        self.lbl_timer.pack(anchor="w")
-
-        # Controls Frame - compact
-        frm_controls = tk.Frame(self.root, bg='#1a1a2e')
-        frm_controls.pack(fill="x", padx=10, pady=5)
-
-        self.btn_start = tk.Button(frm_controls, text="▶ START", command=self.start_bot, 
-                                   bg="#00c853", width=8, **button_style)
-        self.btn_start.grid(row=0, column=0, padx=2)
-
-        self.btn_stop = tk.Button(frm_controls, text="■ STOP", command=self.stop_bot, 
-                                  bg="#ff5252", width=8, **button_style)
-        self.btn_stop.grid(row=0, column=1, padx=2)
-
-        self.btn_pause = tk.Button(frm_controls, text="⏸ PAUSE", command=self.toggle_pause, 
-                                   bg="#ffab40", width=8, **button_style)
-        self.btn_pause.grid(row=0, column=2, padx=2)
-
-        # Mode Selection - compact
-        frm_mode = tk.LabelFrame(self.root, text="Mode", padx=6, pady=4,
-                                 bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
-        frm_mode.pack(fill="x", padx=10, pady=5)
-
-        self.mode_var = tk.StringVar(value="smart")
-        rb_smart = tk.Radiobutton(frm_mode, text="Smart (Detect & Learn)", 
-                                  variable=self.mode_var, value="smart", 
-                                  command=self.update_mode,
-                                  bg='#16213e', fg='#eaeaea', selectcolor='#1a1a2e',
-                                  activebackground='#1a1a2e', activeforeground='#00d4ff',
-                                  font=('Segoe UI', 7))
-        rb_smart.pack(anchor="w")
-        rb_rhythm = tk.Radiobutton(frm_mode, text="Rhythm (Fixed Interval)", 
-                                   variable=self.mode_var, value="rhythm", 
-                                   command=self.update_mode,
-                                   bg='#16213e', fg='#eaeaea', selectcolor='#1a1a2e',
-                                   activebackground='#1a1a2e', activeforeground='#00d4ff',
-                                   font=('Segoe UI', 7))
-        rb_rhythm.pack(anchor="w")
-        rb_playback = tk.Radiobutton(frm_mode, text="Playback (Learned Patterns)", 
-                                     variable=self.mode_var, value="playback", 
-                                     command=self.update_mode,
-                                     bg='#16213e', fg='#eaeaea', selectcolor='#1a1a2e',
-                                     activebackground='#1a1a2e', activeforeground='#00d4ff',
-                                     font=('Segoe UI', 7))
-        rb_playback.pack(anchor="w")
-
-        # Settings Frame - compact
-        frm_settings = tk.LabelFrame(self.root, text="Settings", padx=8, pady=6,
-                                     bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
-        frm_settings.pack(fill="x", padx=10, pady=5)
-
-        # Interval Slider
-        tk.Label(frm_settings, text="Interval:", bg='#16213e', fg='#aaaaaa',
-                font=('Segoe UI', 7)).grid(row=0, column=0, sticky="w")
-        self.slider_interval = tk.Scale(frm_settings, from_=0.005, to=0.1, resolution=0.001, 
-                                        orient="horizontal", length=140,
-                                        bg='#1a1a2e', fg='#00d4ff', troughcolor='#16213e',
-                                        highlightthickness=0, font=('Segoe UI', 7))
-        self.slider_interval.set(0.017)
-        self.slider_interval.grid(row=0, column=1, padx=8)
-
-        # Reaction Time
-        tk.Label(frm_settings, text="Reaction (ms):", bg='#16213e', fg='#aaaaaa',
-                font=('Segoe UI', 7)).grid(row=1, column=0, sticky="w")
-        self.entry_reaction = tk.Entry(frm_settings, width=6, bg='#1a1a2e', fg='#00d4ff',
-                                       insertbackground='#00d4ff', relief='flat',
-                                       font=('Segoe UI', 8), justify='center')
-        self.entry_reaction.insert(0, "50")
-        self.entry_reaction.grid(row=1, column=1, sticky="w", padx=8)
-
-        # Jitter
-        tk.Label(frm_settings, text="Jitter (px):", bg='#16213e', fg='#aaaaaa',
-                font=('Segoe UI', 7)).grid(row=2, column=0, sticky="w")
-        self.entry_jitter = tk.Entry(frm_settings, width=6, bg='#1a1a2e', fg='#00d4ff',
-                                     insertbackground='#00d4ff', relief='flat',
-                                     font=('Segoe UI', 8), justify='center')
-        self.entry_jitter.insert(0, "2.0")
-        self.entry_jitter.grid(row=2, column=1, sticky="w", padx=8)
-
-        # Setup Helpers - compact row
-        frm_helpers = tk.Frame(self.root, bg='#1a1a2e')
-        frm_helpers.pack(fill="x", padx=10, pady=(5, 8))
-
-        helper_btn_style = {'bg': '#16213e', 'fg': '#00d4ff', 'relief': 'flat', 
-                           'cursor': 'hand2', 'activebackground': '#1a1a2e',
-                           'font': ('Segoe UI', 8)}
-        tk.Button(frm_helpers, text="📍 Region", command=self.set_region, 
-                 **helper_btn_style).pack(side="left", padx=2, expand=True, fill="x")
-        tk.Button(frm_helpers, text="🎨 Color", command=self.capture_color, 
-                 **helper_btn_style).pack(side="left", padx=2, expand=True, fill="x")
-        tk.Button(frm_helpers, text="🗑 Clear", command=self.clear_data, 
-                 **helper_btn_style).pack(side="left", padx=2, expand=True, fill="x")
-
-        # Info Log - compact
-        frm_log = tk.LabelFrame(self.root, text="Log", padx=5, pady=5,
-                                bg='#16213e', fg='#00d4ff', font=('Segoe UI', 7, 'bold'))
-        frm_log.pack(fill="both", expand=True, padx=10, pady=(5, 10))
-        
-        self.txt_log = tk.Text(frm_log, height=5, state="disabled", bg='#0f0f1a', 
-                               fg='#00ff88', insertbackground='#00ff88',
-                               font=("Consolas", 7), relief='flat')
-        self.txt_log.pack(fill="both", expand=True)
-
-        self.log("Ready. Enable click-through & press START.")
-        self.log(f"Data: {DATA_FILE}")
-
-    def log(self, message):
-        self.txt_log.config(state="normal")
-        self.txt_log.insert("end", f"> {message}\n")
-        self.txt_log.see("end")
-        self.txt_log.config(state="disabled")
-
-    def update_mode(self):
-        self.bot.mode = self.mode_var.get()
-        self.log(f"Mode switched to: {self.bot.mode}")
-        if self.bot.mode == 'playback':
-            self.bot.load_learned_clicks()
-            self.log(f"Loaded {len(self.bot.learned_clicks)} patterns.")
-
-    def update_status(self, elapsed, clicks):
-        status_text = "RUNNING" if not self.bot.paused else "PAUSED"
-        color = "#ffa500" if self.bot.paused else "#00ff88"
-        self.lbl_status.config(text=f"● {status_text}", fg=color)
-        self.lbl_timer.config(text=f"Time: {elapsed:.2f}s | Clicks: {clicks}")
-        
-        # Update overlay button text
-        if hasattr(self, 'btn_clickthrough'):
-            state_text = "ON" if self.click_through_enabled else "OFF"
-            bg_color = "#4caf50" if self.click_through_enabled else "#e94560"
-            checkmark = "☑" if self.click_through_enabled else "☐"
-            self.btn_clickthrough.config(
-                text=f"{checkmark} Click-Through: {state_text}",
-                bg=bg_color
-            )
-
-    def start_bot(self):
-        if self.thread and self.thread.is_alive():
-            self.log("Bot already running.")
-            return
-
-        # Update config from UI
+    def select_region(self):
+        self.ui.withdraw()
+        time.sleep(0.3)
         try:
-            self.bot.config.reaction_time = float(self.entry_reaction.get())
-            self.bot.config.jitter = float(self.entry_jitter.get())
-            self.bot.click_interval = self.slider_interval.get()
-            self.bot.mode = self.mode_var.get()
-        except ValueError as e:
-            self.log(f"Invalid settings: {e}")
-            return
+            import screeninfo
+            mon = screeninfo.get_monitors()[0]
+            cx, cy = mon.width // 2, mon.height // 2
+            self.config["region"] = [cx - 50, cy - 50, 100, 100]
+            messagebox.showinfo("Region Set", f"Center region selected.\nEdit config for precision.")
+        except: self.config["region"] = [100, 100, 100, 100]
+        self.ui.deiconify()
+        self.ui.focus_force()
 
-        if self.bot.mode == 'smart' and (self.bot.ground_color is None or self.bot.scan_region is None):
-            self.log("⚠ Warning: Scan region or ground color not set!")
-            self.log("Smart mode may not work correctly. Use helper buttons.")
+    def sample_color(self):
+        if self.frame is not None:
+            h, w, _ = self.frame.shape
+            center = self.frame[h//2, w//2]
+            self.config["target_color"] = center.tolist()
+            messagebox.showinfo("Sampled", f"Color (BGR): {center}")
+        else: messagebox.showwarning("No Feed", "Start bot or set region first")
 
-        self.thread = threading.Thread(target=self.bot.run_loop, args=(self.update_status,), daemon=True)
-        self.thread.start()
-        self.log("▶ Bot started.")
-        self.lbl_status.config(text="● RUNNING", fg="#00ff88")
-
-    def stop_bot(self):
-        if self.thread:
-            self.bot.stop()
-            self.thread.join(timeout=2.0)
-            self.log("■ Bot stopped.")
-            self.lbl_status.config(text="● STOPPED", fg="#ff4444")
-
-    def toggle_pause(self):
-        if self.thread and self.thread.is_alive():
-            is_paused = self.bot.toggle_pause()
-            state = "Paused" if is_paused else "Resumed"
-            self.log(f"⏸ Bot {state}.")
-            status_color = "#ffa500" if is_paused else "#00ff88"
-            self.lbl_status.config(text=f"● {'PAUSED' if is_paused else 'RUNNING'}", fg=status_color)
-
-    def set_region(self):
-        self.log("Select two points: top-left then bottom-right of scan area")
-        def get_coords():
-            coords = []
-            def on_click(x, y, button, pressed):
-                if pressed:
-                    coords.append((x, y))
-                    if len(coords) == 1:
-                        self.log(f"✓ Point 1: {coords[0]}")
-                    elif len(coords) == 2:
-                        return False
-            
-            import pynput.mouse
-            with pynput.mouse.Listener(on_click=on_click) as listener:
-                listener.join()
-            
-            if len(coords) >= 2:
-                x1, y1 = coords[0]
-                x2, y2 = coords[1]
-                w = abs(x2 - x1)
-                h = abs(y2 - y1)
-                x = min(x1, x2)
-                y = min(y1, y2)
-                self.bot.set_scan_region(x, y, w, h)
-                self.log(f"✓ Region set: {w}x{h} at ({x}, {y})")
-            else:
-                self.log("Region selection cancelled.")
-        
-        threading.Thread(target=get_coords, daemon=True).start()
-
-    def capture_color(self):
-        self.log("Click on the ground/wall color to sample...")
-        def get_color():
-            import pynput.mouse
-            clicked = False
-            def on_click(x, y, button, pressed):
-                nonlocal clicked
-                if pressed and not clicked:
-                    clicked = True
-                    pyautogui.moveTo(x, y)
-                    self.bot.capture_ground_color()
-                    self.log("✓ Color captured!")
-                    return False
-            
-            with pynput.mouse.Listener(on_click=on_click) as listener:
-                listener.join()
-        
-        threading.Thread(target=get_color, daemon=True).start()
-
-    def clear_data(self):
-        if messagebox.askyesno("Confirm", "Delete all learned click patterns?"):
-            self.bot.learned_clicks = []
-            self.bot.save_learned_clicks()
-            self.log("✓ Learned data cleared.")
+    def run(self):
+        self.ui.mainloop()
+        self.halt_threads()
 
 if __name__ == "__main__":
-    # Need pynput for the mouse listeners in setup
-    try:
-        import pynput
-    except ImportError:
-        print("Please install pynput: pip install pynput")
-        pass
-
-    root = tk.Tk()
-    app = ClickBotGUI(root)
-    root.mainloop()
+    try: import screeninfo
+    except ImportError: os.system("pip install screeninfo --quiet")
+    app = ClickbotController()
+    app.run()
