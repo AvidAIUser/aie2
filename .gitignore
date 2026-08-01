@@ -1,1 +1,0 @@
-Nothing needs to be added to .gitignore since the changes only include Python source files (.py) and the existing .gitignore appears to be empty or contains only relevant rules.
