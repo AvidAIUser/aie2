@@ -271,7 +271,7 @@ class ClickBotGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("GD Overlay Clickbot")
-        self.root.geometry("380x520")
+        self.root.geometry("350x480")
         self.root.resizable(False, False)
         
         # Configure overlay-style appearance
@@ -281,6 +281,7 @@ class ClickBotGUI:
         self.hwnd = None
         self.overlay_enabled = False
         self.click_through_enabled = False
+        self.gd_window = None
         
         # Schedule overlay setup after window is created
         self.root.after(100, self.setup_overlay_window)
@@ -295,13 +296,27 @@ class ClickBotGUI:
         try:
             self.hwnd = self.root.winfo_id()
             
+            # Find Geometry Dash window for positioning
+            self.gd_window = WindowsOverlayHelper.find_geometry_dash_window()
+            if self.gd_window:
+                gd_rect = WindowsOverlayHelper.get_window_rect(self.gd_window)
+                # Position overlay at top-right corner of GD window
+                overlay_x = gd_rect[0] + gd_rect[2] - 370
+                overlay_y = gd_rect[1] + 10
+                self.root.geometry(f"+{overlay_x}+{overlay_y}")
+                self.log("Auto-positioned over Geometry Dash window")
+            
             # Make window borderless and transparent-looking
             WindowsOverlayHelper.remove_border(self.hwnd)
             WindowsOverlayHelper.make_topmost(self.hwnd)
-            WindowsOverlayHelper.set_transparent(self.hwnd, 230)
+            WindowsOverlayHelper.set_transparent(self.hwnd, 220)
+            WindowsOverlayHelper.hide_from_taskbar(self.hwnd)
             
             self.overlay_enabled = True
-            self.log("Overlay mode enabled (topmost, semi-transparent)")
+            self.log("✓ Overlay mode enabled")
+            self.log("  • Always on top")
+            self.log("  • Semi-transparent")
+            self.log("  • Hidden from taskbar")
         except Exception as e:
             self.log(f"Overlay setup failed: {e}")
             self.log("Running in standard window mode")
@@ -314,19 +329,19 @@ class ClickBotGUI:
             
         try:
             if self.click_through_enabled:
-                # Disable click-through
-                ex_style = ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-                ex_style &= ~WS_EX_TRANSPARENT
-                ctypes.windll.user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
+                # Disable click-through - make interactive
+                WindowsOverlayHelper.make_interactive(self.hwnd)
+                # Re-apply topmost and borderless since make_interactive resets styles
+                WindowsOverlayHelper.remove_border(self.hwnd)
+                WindowsOverlayHelper.make_topmost(self.hwnd)
+                WindowsOverlayHelper.set_transparent(self.hwnd, 220)
                 self.click_through_enabled = False
-                self.log("Click-through DISABLED - you can interact with the menu")
+                self.log("☐ Click-through: OFF (Interactive)")
             else:
                 # Enable click-through
-                ex_style = ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-                ex_style |= WS_EX_LAYERED | WS_EX_TRANSPARENT
-                ctypes.windll.user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
+                WindowsOverlayHelper.make_click_through(self.hwnd)
                 self.click_through_enabled = True
-                self.log("Click-through ENABLED - clicks go to GD")
+                self.log("☑ Click-through: ON (Passes to GD)")
         except Exception as e:
             self.log(f"Click-through toggle failed: {e}")
 
@@ -345,58 +360,53 @@ class ClickBotGUI:
             'cursor': 'hand2'
         }
 
-        # Title
-        lbl_title = tk.Label(self.root, text="GD OVERLAY CLICKBOT", 
-                            font=("Segoe UI", 14, "bold"),
+        # Title - compact with icon
+        lbl_title = tk.Label(self.root, text="⚡ GD OVERLAY", 
+                            font=("Segoe UI", 12, "bold"),
                             bg='#1a1a2e', fg='#00d4ff')
-        lbl_title.pack(pady=8)
+        lbl_title.pack(pady=(5, 8))
 
-        # Overlay Controls
+        # Overlay Controls - prominent at top
         frm_overlay = tk.Frame(self.root, bg='#16213e')
         frm_overlay.pack(fill="x", padx=10, pady=5)
         
-        self.btn_clickthrough = tk.Button(frm_overlay, text="🖱️ Click-Through: OFF", 
+        self.btn_clickthrough = tk.Button(frm_overlay, text="☑ Click-Through: ON", 
                                          command=self.toggle_click_through,
-                                         bg='#e94560', **button_style)
-        self.btn_clickthrough.pack(side="left", padx=5, pady=5)
-        
-        self.lbl_overlay_status = tk.Label(frm_overlay, text="● Interactive", 
-                                           font=("Segoe UI", 8),
-                                           bg='#16213e', fg='#ffa500')
-        self.lbl_overlay_status.pack(side="right", padx=5, pady=5)
+                                         bg='#4caf50', **button_style)
+        self.btn_clickthrough.pack(side="left", padx=5, pady=5, expand=True, fill="x")
 
-        # Status Frame
-        frm_status = tk.LabelFrame(self.root, text="Status", padx=10, pady=8,
-                                   bg='#16213e', fg='#00d4ff', font=('Segoe UI', 9, 'bold'))
+        # Status Frame - compact
+        frm_status = tk.LabelFrame(self.root, text="Status", padx=8, pady=6,
+                                   bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
         frm_status.pack(fill="x", padx=10, pady=5)
         
         self.lbl_status = tk.Label(frm_status, text="● STOPPED", fg="#ff4444", 
-                                   bg='#16213e', font=("Consolas", 11, "bold"))
+                                   bg='#16213e', font=("Consolas", 10, "bold"))
         self.lbl_status.pack(anchor="w")
         
         self.lbl_timer = tk.Label(frm_status, text="Time: 0.00s | Clicks: 0", 
-                                  font=("Consolas", 9), bg='#16213e', fg='#cccccc')
+                                  font=("Consolas", 8), bg='#16213e', fg='#cccccc')
         self.lbl_timer.pack(anchor="w")
 
-        # Controls Frame
+        # Controls Frame - compact
         frm_controls = tk.Frame(self.root, bg='#1a1a2e')
         frm_controls.pack(fill="x", padx=10, pady=5)
 
         self.btn_start = tk.Button(frm_controls, text="▶ START", command=self.start_bot, 
-                                   bg="#00c853", width=9, **button_style)
-        self.btn_start.grid(row=0, column=0, padx=3)
+                                   bg="#00c853", width=8, **button_style)
+        self.btn_start.grid(row=0, column=0, padx=2)
 
         self.btn_stop = tk.Button(frm_controls, text="■ STOP", command=self.stop_bot, 
-                                  bg="#ff5252", width=9, **button_style)
-        self.btn_stop.grid(row=0, column=1, padx=3)
+                                  bg="#ff5252", width=8, **button_style)
+        self.btn_stop.grid(row=0, column=1, padx=2)
 
         self.btn_pause = tk.Button(frm_controls, text="⏸ PAUSE", command=self.toggle_pause, 
-                                   bg="#ffab40", width=9, **button_style)
-        self.btn_pause.grid(row=0, column=2, padx=3)
+                                   bg="#ffab40", width=8, **button_style)
+        self.btn_pause.grid(row=0, column=2, padx=2)
 
-        # Mode Selection
-        frm_mode = tk.LabelFrame(self.root, text="Mode", padx=8, pady=8,
-                                 bg='#16213e', fg='#00d4ff', font=('Segoe UI', 9, 'bold'))
+        # Mode Selection - compact
+        frm_mode = tk.LabelFrame(self.root, text="Mode", padx=6, pady=4,
+                                 bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
         frm_mode.pack(fill="x", padx=10, pady=5)
 
         self.mode_var = tk.StringVar(value="smart")
@@ -404,73 +414,82 @@ class ClickBotGUI:
                                   variable=self.mode_var, value="smart", 
                                   command=self.update_mode,
                                   bg='#16213e', fg='#eaeaea', selectcolor='#1a1a2e',
-                                  activebackground='#1a1a2e', activeforeground='#00d4ff')
+                                  activebackground='#1a1a2e', activeforeground='#00d4ff',
+                                  font=('Segoe UI', 7))
         rb_smart.pack(anchor="w")
         rb_rhythm = tk.Radiobutton(frm_mode, text="Rhythm (Fixed Interval)", 
                                    variable=self.mode_var, value="rhythm", 
                                    command=self.update_mode,
                                    bg='#16213e', fg='#eaeaea', selectcolor='#1a1a2e',
-                                   activebackground='#1a1a2e', activeforeground='#00d4ff')
+                                   activebackground='#1a1a2e', activeforeground='#00d4ff',
+                                   font=('Segoe UI', 7))
         rb_rhythm.pack(anchor="w")
         rb_playback = tk.Radiobutton(frm_mode, text="Playback (Learned Patterns)", 
                                      variable=self.mode_var, value="playback", 
                                      command=self.update_mode,
                                      bg='#16213e', fg='#eaeaea', selectcolor='#1a1a2e',
-                                     activebackground='#1a1a2e', activeforeground='#00d4ff')
+                                     activebackground='#1a1a2e', activeforeground='#00d4ff',
+                                     font=('Segoe UI', 7))
         rb_playback.pack(anchor="w")
 
-        # Settings Frame
-        frm_settings = tk.LabelFrame(self.root, text="Settings", padx=8, pady=8,
-                                     bg='#16213e', fg='#00d4ff', font=('Segoe UI', 9, 'bold'))
+        # Settings Frame - compact
+        frm_settings = tk.LabelFrame(self.root, text="Settings", padx=8, pady=6,
+                                     bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
         frm_settings.pack(fill="x", padx=10, pady=5)
 
         # Interval Slider
-        tk.Label(frm_settings, text="Interval:", bg='#16213e', fg='#aaaaaa').grid(row=0, column=0, sticky="w")
+        tk.Label(frm_settings, text="Interval:", bg='#16213e', fg='#aaaaaa',
+                font=('Segoe UI', 7)).grid(row=0, column=0, sticky="w")
         self.slider_interval = tk.Scale(frm_settings, from_=0.005, to=0.1, resolution=0.001, 
-                                        orient="horizontal", length=180,
+                                        orient="horizontal", length=140,
                                         bg='#1a1a2e', fg='#00d4ff', troughcolor='#16213e',
-                                        highlightthickness=0)
+                                        highlightthickness=0, font=('Segoe UI', 7))
         self.slider_interval.set(0.017)
-        self.slider_interval.grid(row=0, column=1, padx=10)
+        self.slider_interval.grid(row=0, column=1, padx=8)
 
         # Reaction Time
-        tk.Label(frm_settings, text="Reaction (ms):", bg='#16213e', fg='#aaaaaa').grid(row=1, column=0, sticky="w")
-        self.entry_reaction = tk.Entry(frm_settings, width=8, bg='#1a1a2e', fg='#00d4ff',
-                                       insertbackground='#00d4ff', relief='flat')
+        tk.Label(frm_settings, text="Reaction (ms):", bg='#16213e', fg='#aaaaaa',
+                font=('Segoe UI', 7)).grid(row=1, column=0, sticky="w")
+        self.entry_reaction = tk.Entry(frm_settings, width=6, bg='#1a1a2e', fg='#00d4ff',
+                                       insertbackground='#00d4ff', relief='flat',
+                                       font=('Segoe UI', 8), justify='center')
         self.entry_reaction.insert(0, "50")
-        self.entry_reaction.grid(row=1, column=1, sticky="w", padx=10)
+        self.entry_reaction.grid(row=1, column=1, sticky="w", padx=8)
 
         # Jitter
-        tk.Label(frm_settings, text="Jitter (px):", bg='#16213e', fg='#aaaaaa').grid(row=2, column=0, sticky="w")
-        self.entry_jitter = tk.Entry(frm_settings, width=8, bg='#1a1a2e', fg='#00d4ff',
-                                     insertbackground='#00d4ff', relief='flat')
+        tk.Label(frm_settings, text="Jitter (px):", bg='#16213e', fg='#aaaaaa',
+                font=('Segoe UI', 7)).grid(row=2, column=0, sticky="w")
+        self.entry_jitter = tk.Entry(frm_settings, width=6, bg='#1a1a2e', fg='#00d4ff',
+                                     insertbackground='#00d4ff', relief='flat',
+                                     font=('Segoe UI', 8), justify='center')
         self.entry_jitter.insert(0, "2.0")
-        self.entry_jitter.grid(row=2, column=1, sticky="w", padx=10)
+        self.entry_jitter.grid(row=2, column=1, sticky="w", padx=8)
 
-        # Setup Helpers
+        # Setup Helpers - compact row
         frm_helpers = tk.Frame(self.root, bg='#1a1a2e')
-        frm_helpers.pack(fill="x", padx=10, pady=8)
+        frm_helpers.pack(fill="x", padx=10, pady=(5, 8))
 
         helper_btn_style = {'bg': '#16213e', 'fg': '#00d4ff', 'relief': 'flat', 
-                           'cursor': 'hand2', 'activebackground': '#1a1a2e'}
-        tk.Button(frm_helpers, text="📍 Set Region", command=self.set_region, 
-                 **helper_btn_style).pack(side="left", padx=3)
-        tk.Button(frm_helpers, text="🎨 Capture Color", command=self.capture_color, 
-                 **helper_btn_style).pack(side="left", padx=3)
-        tk.Button(frm_helpers, text="🗑 Clear Data", command=self.clear_data, 
-                 **helper_btn_style).pack(side="left", padx=3)
+                           'cursor': 'hand2', 'activebackground': '#1a1a2e',
+                           'font': ('Segoe UI', 8)}
+        tk.Button(frm_helpers, text="📍 Region", command=self.set_region, 
+                 **helper_btn_style).pack(side="left", padx=2, expand=True, fill="x")
+        tk.Button(frm_helpers, text="🎨 Color", command=self.capture_color, 
+                 **helper_btn_style).pack(side="left", padx=2, expand=True, fill="x")
+        tk.Button(frm_helpers, text="🗑 Clear", command=self.clear_data, 
+                 **helper_btn_style).pack(side="left", padx=2, expand=True, fill="x")
 
-        # Info Log
+        # Info Log - compact
         frm_log = tk.LabelFrame(self.root, text="Log", padx=5, pady=5,
-                                bg='#16213e', fg='#00d4ff', font=('Segoe UI', 8, 'bold'))
-        frm_log.pack(fill="both", expand=True, padx=10, pady=5)
+                                bg='#16213e', fg='#00d4ff', font=('Segoe UI', 7, 'bold'))
+        frm_log.pack(fill="both", expand=True, padx=10, pady=(5, 10))
         
-        self.txt_log = tk.Text(frm_log, height=6, state="disabled", bg='#0f0f1a', 
+        self.txt_log = tk.Text(frm_log, height=5, state="disabled", bg='#0f0f1a', 
                                fg='#00ff88', insertbackground='#00ff88',
-                               font=("Consolas", 8), relief='flat')
+                               font=("Consolas", 7), relief='flat')
         self.txt_log.pack(fill="both", expand=True)
 
-        self.log("Ready. Configure settings and press START.")
+        self.log("Ready. Enable click-through & press START.")
         self.log(f"Data: {DATA_FILE}")
 
     def log(self, message):
@@ -496,13 +515,11 @@ class ClickBotGUI:
         if hasattr(self, 'btn_clickthrough'):
             state_text = "ON" if self.click_through_enabled else "OFF"
             bg_color = "#4caf50" if self.click_through_enabled else "#e94560"
+            checkmark = "☑" if self.click_through_enabled else "☐"
             self.btn_clickthrough.config(
-                text=f"🖱️ Click-Through: {state_text}",
+                text=f"{checkmark} Click-Through: {state_text}",
                 bg=bg_color
             )
-            status_label = "Click-through" if self.click_through_enabled else "Interactive"
-            status_color = "#4caf50" if self.click_through_enabled else "#ffa500"
-            self.lbl_overlay_status.config(text=f"● {status_label}", fg=status_color)
 
     def start_bot(self):
         if self.thread and self.thread.is_alive():
@@ -544,25 +561,22 @@ class ClickBotGUI:
             self.lbl_status.config(text=f"● {'PAUSED' if is_paused else 'RUNNING'}", fg=status_color)
 
     def set_region(self):
-        self.log("Move mouse to top-left of scan area, click, then move to bottom-right and click.")
+        self.log("Select two points: top-left then bottom-right of scan area")
         def get_coords():
-            p1 = pyautogui.position()
-            self.log(f"Top-Left selected: {p1}")
-            # Wait for second click implicitly by blocking or just instructing user
-            # For simplicity in this script, we'll just take two rapid clicks logic or manual entry
-            # Implementing a simple wait loop for two clicks
             coords = []
             def on_click(x, y, button, pressed):
                 if pressed:
                     coords.append((x, y))
-                    if len(coords) == 2:
+                    if len(coords) == 1:
+                        self.log(f"✓ Point 1: {coords[0]}")
+                    elif len(coords) == 2:
                         return False
             
             import pynput.mouse
             with pynput.mouse.Listener(on_click=on_click) as listener:
                 listener.join()
             
-            if len(coords) == 2:
+            if len(coords) >= 2:
                 x1, y1 = coords[0]
                 x2, y2 = coords[1]
                 w = abs(x2 - x1)
@@ -570,14 +584,14 @@ class ClickBotGUI:
                 x = min(x1, x2)
                 y = min(y1, y2)
                 self.bot.set_scan_region(x, y, w, h)
-                self.log(f"Region set: x={x}, y={y}, w={w}, h={h}")
+                self.log(f"✓ Region set: {w}x{h} at ({x}, {y})")
             else:
                 self.log("Region selection cancelled.")
         
         threading.Thread(target=get_coords, daemon=True).start()
 
     def capture_color(self):
-        self.log("Position mouse over the ground/wall and click to capture color...")
+        self.log("Click on the ground/wall color to sample...")
         def get_color():
             import pynput.mouse
             clicked = False
@@ -585,9 +599,9 @@ class ClickBotGUI:
                 nonlocal clicked
                 if pressed and not clicked:
                     clicked = True
-                    pyautogui.moveTo(x, y) # Move to ensure accuracy
+                    pyautogui.moveTo(x, y)
                     self.bot.capture_ground_color()
-                    self.log("Color captured!")
+                    self.log("✓ Color captured!")
                     return False
             
             with pynput.mouse.Listener(on_click=on_click) as listener:
@@ -599,7 +613,7 @@ class ClickBotGUI:
         if messagebox.askyesno("Confirm", "Delete all learned click patterns?"):
             self.bot.learned_clicks = []
             self.bot.save_learned_clicks()
-            self.log("Learned data cleared.")
+            self.log("✓ Learned data cleared.")
 
 if __name__ == "__main__":
     # Need pynput for the mouse listeners in setup
@@ -607,8 +621,6 @@ if __name__ == "__main__":
         import pynput
     except ImportError:
         print("Please install pynput: pip install pynput")
-        # Fallback or exit
-        # For this script we assume it's installed or handle gracefully
         pass
 
     root = tk.Tk()

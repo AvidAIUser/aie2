@@ -1,26 +1,28 @@
 # GD Overlay Clickbot - In-Game Menu Edition
 
-![Version](https://img.shields.io/badge/version-3.0-blue)
+![Version](https://img.shields.io/badge/version-3.1-blue)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 **Revolutionary overlay-based clickbot that runs INSIDE Geometry Dash!** No more split-screening or alt-tabbing - the menu overlays directly on top of your game with click-through functionality.
 
 ## 🎯 Key Features
 
-### In-Game Overlay (NEW!)
-- **Runs inside Geometry Dash**: The menu appears as an overlay on top of GD
+### ✨ In-Game Overlay (NEW!)
+- **Auto-positioning**: Automatically positions itself over your GD window on startup
 - **Click-through toggle**: Enable to play normally, disable to interact with menu
 - **Always on top**: Stays visible during gameplay
-- **Semi-transparent**: See the game through the menu
-- **Borderless design**: Minimal visual intrusion
-- **Dark theme**: Easy on the eyes during long sessions
+- **Semi-transparent**: 85% opacity for minimal visual obstruction
+- **Borderless design**: No title bar or window decorations
+- **Hidden from taskbar**: Clean, unobtrusive presence
+- **Compact UI**: Optimized 350x480 footprint
 
-### Smart Detection & Learning
+### 🧠 Smart Detection & Learning
 - **Screen-based obstacle detection**: No memory offsets required!
 - **Auto-learning**: Saves successful click patterns from good runs
 - **Playback mode**: Replay learned patterns perfectly
 - **Rhythm mode**: Fixed interval clicking for consistent levels
 
-### Advanced Humanization
+### 👤 Advanced Humanization
 - **Reaction time simulation**: Configurable delay with variance
 - **Mouse jitter**: Natural micro-movements
 - **Misclick chance**: Occasional missed clicks for authenticity
@@ -42,16 +44,16 @@ pip install -r requirements.txt
 ### Quick Start
 1. **Launch Geometry Dash** and start a level
 2. **Run the clickbot**: `python gd_clickbot_unified.py`
-3. **Position the overlay**: Drag it to a corner of your screen
+3. **Menu auto-positions**: Appears at top-right of GD window
 4. **Configure settings**: Set scan region and capture ground color
-5. **Enable click-through**: Toggle the button so clicks go to GD
+5. **Enable click-through**: Toggle button turns green
 6. **Press START**: Begin automated playing
 
 ### Overlay Controls
 
 | Button | Function |
 |--------|----------|
-| 🖱️ Click-Through | Toggle whether clicks pass through to GD |
+| ☑/☐ Click-Through | Toggle whether clicks pass through to GD |
 | ▶ START | Begin the clickbot |
 | ■ STOP | Stop immediately |
 | ⏸ PAUSE | Pause/resume without stopping |
@@ -77,25 +79,24 @@ pip install -r requirements.txt
 ### Setup Guide
 
 1. **Set Scan Region**:
-   - Click "📍 Set Region"
-   - Click top-left corner of your detection area
-   - Click bottom-right corner
+   - Click "📍 Region"
+   - Click two points: top-left then bottom-right of detection area
    - Recommended: Area just ahead of player showing incoming obstacles
 
 2. **Capture Ground Color**:
    - Position mouse over the ground/wall color in GD
-   - Click "🎨 Capture Color"
+   - Click "🎨 Color"
    - Click once to sample the color
    - The bot detects obstacles by color differences
 
 3. **Enable Click-Through**:
-   - Click the "🖱️ Click-Through: OFF" button
-   - Status changes to "ON" (green)
+   - Click the "☐ Click-Through: OFF" button
+   - Status changes to "☑ Click-Through: ON" (green)
    - Now your clicks go through to GD while overlay stays visible
 
 4. **Start Playing**:
    - Press ▶ START
-   - Toggle click-through ON
+   - Ensure click-through is ON
    - Let the bot play!
 
 ## Configuration
@@ -133,7 +134,9 @@ pip install -r requirements.txt
 - Uses Windows API for layered windows
 - WS_EX_TRANSPARENT allows click-through
 - WS_EX_TOPMOST keeps it above GD
+- WS_EX_TOOLWINDOW hides from taskbar
 - Alpha blending for transparency
+- Auto-detects GD window position
 
 ## File Structure
 
@@ -153,19 +156,19 @@ README.md                # This file
 - Check if GD is blocking overlays (shouldn't, but some anti-cheat might)
 
 ### Click-through not working?
-- Ensure the toggle button shows "ON"
+- Ensure the toggle button shows "ON" (green)
 - Some games may block click-through; try windowed mode
 - Restart the application
 
 ### Bot not detecting obstacles?
-- Verify ground color is captured (check log)
+- Verify ground color is captured (check log for ✓ messages)
 - Adjust scan region to show more ground/wall
 - Make sure obstacle actually changes the color significantly
 
 ### Learned patterns not saving?
 - Runs must last >2 seconds to save
 - Check `~/.gd_clickbot/learned_clicks.json` exists
-- Look for "Session clicks saved" in the log
+- Look for "✓ Session clicks saved" in the log
 
 ## Legal Notice
 
@@ -173,8 +176,24 @@ README.md                # This file
 
 ## Credits
 
-Built upon the foundation of the AI-Assisted Humanized Clickbot v2.0
+Built upon the foundation of the AI-Assisted Humanized Clickbot v2.0  
 Enhanced with in-game overlay technology for seamless integration
+
+## Changelog
+
+### v3.1 (Current)
+- ✨ Auto-positioning: Menu now finds and positions over GD window automatically
+- ✨ Hidden from taskbar for cleaner appearance
+- ✨ More compact UI design (350x480)
+- ✨ Improved click-through toggle with better visual feedback
+- ✨ Streamlined helper buttons (Region, Color, Clear)
+- ✨ Enhanced logging with checkmark indicators
+- ✨ Better font sizing throughout for readability
+
+### v3.0
+- Initial overlay implementation
+- Click-through functionality
+- Semi-transparent borderless design
 
 ## License
 
