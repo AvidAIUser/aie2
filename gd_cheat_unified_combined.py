@@ -354,38 +354,155 @@ class GDClickbotUnified:
 
     def build_visuals_tab(self):
         tk.Label(self.tab_visuals, text="Visual Options", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=10)
-        tk.Label(self.tab_visuals, text="(Placeholder for future ESP/Wallhack)", bg=self.bg_color, fg="#555555", font=("Consolas", 8)).pack()
         
-        # Example toggle
-        var = tk.BooleanVar(value=True)
-        chk = tk.Checkbutton(self.tab_visuals, text="Show FPS Counter", variable=var, bg=self.bg_color, fg="#ccc", 
-                            selectcolor="#333333", activebackground=self.bg_color, activeforeground="#ccc",
-                            font=("Consolas", 9))
-        chk.pack(pady=20)
+        # ESP Options Frame
+        esp_frame = tk.LabelFrame(self.tab_visuals, text="ESP / Overlay", bg=self.frame_color, fg="#aaa", font=("Consolas", 9))
+        esp_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.esp_var = tk.BooleanVar(value=False)
+        chk_esp = tk.Checkbutton(esp_frame, text="Enable ESP Overlay", variable=self.esp_var, 
+                                bg=self.frame_color, fg="#ccc", selectcolor="#333333",
+                                activebackground=self.frame_color, activeforeground="#ccc",
+                                font=("Consolas", 9), command=self.toggle_esp)
+        chk_esp.pack(pady=5, padx=10, anchor=tk.W)
+        
+        self.show_coords_var = tk.BooleanVar(value=True)
+        chk_coords = tk.Checkbutton(esp_frame, text="Show Coordinates", variable=self.show_coords_var,
+                                   bg=self.frame_color, fg="#ccc", selectcolor="#333333",
+                                   activebackground=self.frame_color, activeforeground="#ccc",
+                                   font=("Consolas", 9))
+        chk_coords.pack(pady=5, padx=10, anchor=tk.W)
+        
+        # Color Picker for ESP
+        color_frame = tk.Frame(esp_frame, bg=self.frame_color)
+        color_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(color_frame, text="ESP Color:", bg=self.frame_color, fg="#aaa", font=("Consolas", 8)).pack(side=tk.LEFT)
+        self.esp_color_btn = tk.Button(color_frame, text="█████", bg="#00ff9d", command=self.pick_esp_color,
+                                      relief=tk.FLAT, cursor="hand2")
+        self.esp_color_btn.pack(side=tk.RIGHT)
+        self.esp_color = "#00ff9d"
+        
+        # Performance Options
+        perf_frame = tk.LabelFrame(self.tab_visuals, text="Performance", bg=self.frame_color, fg="#aaa", font=("Consolas", 9))
+        perf_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.fps_var = tk.BooleanVar(value=True)
+        chk_fps = tk.Checkbutton(perf_frame, text="Show FPS Counter", variable=self.fps_var,
+                                bg=self.frame_color, fg="#ccc", selectcolor="#333333",
+                                activebackground=self.frame_color, activeforeground="#ccc",
+                                font=("Consolas", 9))
+        chk_fps.pack(pady=5, padx=10, anchor=tk.W)
+        
+        self.vsync_var = tk.BooleanVar(value=False)
+        chk_vsync = tk.Checkbutton(perf_frame, text="Force VSync", variable=self.vsync_var,
+                                  bg=self.frame_color, fg="#ccc", selectcolor="#333333",
+                                  activebackground=self.frame_color, activeforeground="#ccc",
+                                  font=("Consolas", 9))
+        chk_vsync.pack(pady=5, padx=10, anchor=tk.W)
+        
+        # Info label
+        tk.Label(self.tab_visuals, text="(More visuals coming soon...)", bg=self.bg_color, 
+                fg="#555555", font=("Consolas", 8)).pack(side=tk.BOTTOM, pady=10)
+
+    def toggle_esp(self):
+        """Toggle ESP overlay visibility"""
+        if self.esp_var.get():
+            self.log("ESP Overlay Enabled")
+        else:
+            self.log("ESP Overlay Disabled")
+    
+    def pick_esp_color(self):
+        """Pick color for ESP overlay"""
+        color = colorchooser.askcolor(initialcolor=self.esp_color, title="Choose ESP Color")
+        if color[1]:
+            self.esp_color = color[1]
+            self.esp_color_btn.config(bg=color[1])
+            self.log(f"ESP Color set to {color[1]}")
 
     def build_config_tab(self):
+        # Profiles Section
         tk.Label(self.tab_config, text="Profiles", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=10)
         
         btn_frame = tk.Frame(self.tab_config, bg=self.bg_color)
         btn_frame.pack(pady=10)
         
-        tk.Button(btn_frame, text="Save Current", command=self.save_config, bg=self.frame_color, fg="white", relief=tk.FLAT, font=("Consolas", 9)).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Reset Defaults", command=self.reset_config, bg="#552222", fg="white", relief=tk.FLAT, font=("Consolas", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="💾 Save Current", command=self.save_config, bg=self.frame_color, fg="white", relief=tk.FLAT, font=("Consolas", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="🔄 Reset Defaults", command=self.reset_config, bg="#552222", fg="white", relief=tk.FLAT, font=("Consolas", 9)).pack(side=tk.LEFT, padx=5)
         
-        tk.Label(self.tab_config, text="Hotkeys:", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=(20, 5))
-        tk.Label(self.tab_config, text=f"INSERT : Toggle Menu Lock", bg=self.bg_color, fg="#aaa", font=("Consolas", 9)).pack(anchor=tk.W, padx=20)
-        tk.Label(self.tab_config, text=f"F12    : Emergency Stop", bg=self.bg_color, fg="#ff5555", font=("Consolas", 9)).pack(anchor=tk.W, padx=20)
+        # Profile Selector (Placeholder for future multiple profiles)
+        profile_frame = tk.Frame(self.tab_config, bg=self.bg_color)
+        profile_frame.pack(pady=5)
+        tk.Label(profile_frame, text="Active Profile:", bg=self.bg_color, fg="#aaa", font=("Consolas", 8)).pack(side=tk.LEFT, padx=5)
+        self.profile_var = tk.StringVar(value="Default")
+        profile_combo = ttk.Combobox(profile_frame, textvariable=self.profile_var, values=["Default", "Practice Mode", "Demon Rush"], state="readonly", width=15)
+        profile_combo.pack(side=tk.LEFT)
+        profile_combo.bind("<<ComboboxSelected>>", lambda e: self.load_profile())
         
-        # Attach Button
-        btn_attach = tk.Button(self.tab_config, text="📎 Snap to GD", command=self.snap_to_gd,
-                               bg=self.frame_color, fg="#aaa", activebackground=self.accent_color,
-                               font=("Consolas", 9), relief=tk.FLAT, cursor="hand2")
-        btn_attach.pack(fill=tk.X, pady=20, padx=10)
+        # Hotkeys Section
+        tk.Label(self.tab_config, text="Hotkeys", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=(20, 5))
+        hotkey_frame = tk.Frame(self.tab_config, bg=self.frame_color)
+        hotkey_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Label(hotkey_frame, text="INSERT", bg=self.frame_color, fg=self.accent_color, font=("Consolas", 9, "bold")).grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
+        tk.Label(hotkey_frame, text=": Toggle Menu Visibility", bg=self.frame_color, fg="#aaa", font=("Consolas", 8)).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        tk.Label(hotkey_frame, text="F12", bg=self.frame_color, fg="#ff5555", font=("Consolas", 9, "bold")).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
+        tk.Label(hotkey_frame, text=": Emergency Stop (Halts Bot)", bg=self.frame_color, fg="#aaa", font=("Consolas", 8)).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        # Window Management
+        tk.Label(self.tab_config, text="Window Management", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=(15, 5))
+        
+        btn_attach = tk.Button(self.tab_config, text="📎 Snap to GD Window", command=self.snap_to_gd,
+                               bg=self.frame_color, fg=self.accent_color, activebackground=self.accent_color, activeforeground="#000",
+                               font=("Consolas", 9, "bold"), relief=tk.FLAT, cursor="hand2", pady=5)
+        btn_attach.pack(fill=tk.X, pady=5, padx=10)
+        
+        self.auto_snap_var = tk.BooleanVar(value=True)
+        chk_auto_snap = tk.Checkbutton(self.tab_config, text="Auto-snap to GD every 5s", variable=self.auto_snap_var,
+                                      bg=self.bg_color, fg="#aaa", selectcolor="#333333",
+                                      activebackground=self.bg_color, activeforeground="#aaa",
+                                      font=("Consolas", 8))
+        chk_auto_snap.pack(anchor=tk.W, padx=25, pady=2)
+        
+        # Advanced Settings
+        tk.Label(self.tab_config, text="Advanced", bg=self.bg_color, fg="#888888", font=("Consolas", 10, "bold")).pack(pady=(15, 5))
+        
+        adv_frame = tk.Frame(self.tab_config, bg=self.bg_color)
+        adv_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.debug_var = tk.BooleanVar(value=False)
+        chk_debug = tk.Checkbutton(adv_frame, text="Debug Logging", variable=self.debug_var,
+                                  bg=self.bg_color, fg="#aaa", selectcolor="#333333",
+                                  activebackground=self.bg_color, activeforeground="#aaa",
+                                  font=("Consolas", 8))
+        chk_debug.pack(anchor=tk.W)
+        
+        self.topmost_var = tk.BooleanVar(value=True)
+        chk_topmost = tk.Checkbutton(adv_frame, text="Always On Top", variable=self.topmost_var, command=self.toggle_topmost,
+                                    bg=self.bg_color, fg="#aaa", selectcolor="#333333",
+                                    activebackground=self.bg_color, activeforeground="#aaa",
+                                    font=("Consolas", 8))
+        chk_topmost.pack(anchor=tk.W, pady=2)
         
         # Helper Text
-        lbl_help = tk.Label(self.tab_config, text=f"Press [{HOTKEY_TOGGLE.upper()}] to Toggle Menu\nDrag Title Bar to Move", 
-                            bg=self.bg_color, fg="#5555", font=("Consolas", 7), justify=tk.CENTER)
-        lbl_help.pack(side=tk.BOTTOM, pady=5)
+        lbl_help = tk.Label(self.tab_config, text=f"☠ Drag title bar to move menu\n☠ Press [{HOTKEY_TOGGLE.upper()}] anywhere to toggle menu", 
+                            bg=self.bg_color, fg="#4444", font=("Consolas", 7), justify=tk.CENTER)
+        lbl_help.pack(side=tk.BOTTOM, pady=10)
+
+    def load_profile(self):
+        """Load a saved profile (placeholder for future implementation)"""
+        profile = self.profile_var.get()
+        self.log(f"Loading profile: {profile}")
+        # Future: Load profile-specific settings from JSON
+        
+    def toggle_topmost(self):
+        """Toggle always-on-top setting"""
+        if self.topmost_var.get():
+            self.root.attributes('-topmost', True)
+            self.log("Always on top: ENABLED")
+        else:
+            self.root.attributes('-topmost', False)
+            self.log("Always on top: DISABLED")
 
     def setup_control_bindings(self):
         """Make controls interactive (remove click-through when hovering them)"""
@@ -587,6 +704,9 @@ class GDClickbotUnified:
 
     def auto_snap_to_gd_loop(self):
         """Periodic auto-snap to GD window (from gd_clickbot_unified.py)"""
+        if not self.auto_snap_var.get():
+            return  # User disabled auto-snap
+            
         try:
             gd_windows = [w for w in gw.getAllWindows() if 'geometry dash' in w.title.lower()]
             if gd_windows:
@@ -603,8 +723,11 @@ class GDClickbotUnified:
                     else:
                         self.root.geometry(f"+{int(x)}+{int(y)}")
                         self.gd_hwnd = None  # Clear old handle
-        except Exception:
-            pass
+                        if self.debug_var.get():
+                            self.log("Auto-snapped to GD window")
+        except Exception as e:
+            if self.debug_var.get():
+                self.log(f"Auto-snap error: {e}")
 
     def save_config(self):
         self.config.save()
