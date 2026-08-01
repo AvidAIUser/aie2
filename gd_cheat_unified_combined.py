@@ -126,18 +126,42 @@ class GDClickbotUnified:
             self.log(f"Error finding GD: {e}")
 
     def snap_to_gd(self):
-        """Moves the cheat menu to the top-right of the GD window"""
-        if not self.gd_hwnd or not self.root:
+        """Moves the cheat menu to the top-right of the GD window using pygetwindow for better compatibility"""
+        if not self.root:
             return
         
+        # Try pygetwindow first (more reliable for modern Windows)
+        try:
+            gd_windows = [w for w in gw.getAllWindows() if 'geometry dash' in w.title.lower()]
+            if gd_windows:
+                gd = gd_windows[0]
+                # Position menu at top-right inside the game window
+                menu_w = 360
+                menu_h = 580
+                
+                x = gd.left + gd.width - menu_w - 10
+                y = gd.top + 10
+                
+                self.root.geometry(f"{menu_w}x{menu_h}+{int(x)}+{int(y)}")
+                self.log("Menu snapped to GD window (pygetwindow).")
+                self.gd_hwnd = None  # Clear old handle
+                return
+        except Exception as e:
+            self.log(f"pygetwindow snap failed: {e}")
+        
+        # Fallback to win32gui method
+        if not self.gd_hwnd:
+            self.find_gd_window()
+        
+        if not self.gd_hwnd or not self.root:
+            return
+
         try:
             rect = win32gui.GetWindowRect(self.gd_hwnd)
             left, top, right, bottom = rect
             width = right - left
             height = bottom - top
             
-            # Position menu at top-right inside the game window
-            # Offset by 10px from edge
             menu_w = 360
             menu_h = 580
             
@@ -145,7 +169,7 @@ class GDClickbotUnified:
             y = top + 10
             
             self.root.geometry(f"{menu_w}x{menu_h}+{int(x)}+{int(y)}")
-            self.log("Menu snapped to GD window.")
+            self.log("Menu snapped to GD window (win32gui).")
         except Exception as e:
             self.log(f"Snap failed: {e}")
 
@@ -555,11 +579,32 @@ class GDClickbotUnified:
         else:
             self.cps_lbl.config(text="CPS: 0")
             
-        # Re-check GD attachment occasionally
-        if not self.gd_hwnd or not win32gui.IsWindow(self.gd_hwnd):
-             self.find_gd_window()
+        # Auto-snap to GD periodically (from gd_clickbot_unified.py)
+        # This runs every 5 seconds in the background
+        self.root.after(5000, self.auto_snap_to_gd_loop)
              
         self.root.after(1000, self.update_monitor)
+
+    def auto_snap_to_gd_loop(self):
+        """Periodic auto-snap to GD window (from gd_clickbot_unified.py)"""
+        try:
+            gd_windows = [w for w in gw.getAllWindows() if 'geometry dash' in w.title.lower()]
+            if gd_windows:
+                gd = gd_windows[0]
+                # Only snap if menu is visible and not being dragged
+                if self.is_visible and not self.drag_active:
+                    x = gd.left + gd.width - 370
+                    y = gd.top + 10
+                    # Check if we're far from expected position (avoid snapping if user moved it)
+                    current_x = self.root.winfo_x()
+                    current_y = self.root.winfo_y()
+                    if abs(current_x - x) > 50 or abs(current_y - y) > 50:
+                        pass  # User moved it, don't auto-snap
+                    else:
+                        self.root.geometry(f"+{int(x)}+{int(y)}")
+                        self.gd_hwnd = None  # Clear old handle
+        except Exception:
+            pass
 
     def save_config(self):
         self.config.save()
