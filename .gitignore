@@ -1,34 +1,3 @@
-```
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+Nothing should be ignored in this case, as only a Python source file (`gd_cheat_menu.py`) was added without any build artifacts, dependencies, or temporary files.
 
-# Dependencies
-venv/
-.venv/
-.env
-.env.local
-*.env.*
-
-# Logs
-*.log
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# Build
-build/
-dist/
-target/
-```
+Therefore, the output is empty.
