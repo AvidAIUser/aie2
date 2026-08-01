@@ -486,7 +486,7 @@ class GDClickbotUnified:
         
         # Helper Text
         lbl_help = tk.Label(self.tab_config, text=f"☠ Drag title bar to move menu\n☠ Press [{HOTKEY_TOGGLE.upper()}] anywhere to toggle menu", 
-                            bg=self.bg_color, fg="#4444", font=("Consolas", 7), justify=tk.CENTER)
+                            bg=self.bg_color, fg="#888888", font=("Consolas", 7), justify=tk.CENTER)
         lbl_help.pack(side=tk.BOTTOM, pady=10)
 
     def load_profile(self):
